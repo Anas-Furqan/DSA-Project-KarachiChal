@@ -13,6 +13,8 @@
 #include "ds/Graph.h"
 #include "ds/MinHeap.h"
 #include "core/Dijkstra.h"
+#include "core/BFS.h"
+#include "ds/LinkedQueue.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -288,4 +290,111 @@ TEST(dijkstra_trace_steps_record) {
     DSTrace trace;
     Dijkstra::shortestPath(g, 0, 5, &trace);
     CHECK(trace.size() > 0 && !trace.truncated());
+}
+
+// ============================================================== LinkedQueue
+struct Req {
+    int id;
+    const char* rider;
+};
+
+static std::vector<int> queueIds(const LinkedQueue<Req>& q) {
+    std::vector<int> ids;
+    q.forEach([&ids](const Req& r) { ids.push_back(r.id); });
+    return ids;
+}
+
+// Queue case 1: plain FIFO order
+TEST(queue_case1_fifo) {
+    LinkedQueue<int> q;
+    q.enqueue(10); q.enqueue(20); q.enqueue(30);
+    CHECK(q.size() == 3);
+    int out = 0;
+    CHECK(q.peekFront(out) && out == 10);
+    CHECK(q.dequeue(out) && out == 10);
+    CHECK(q.dequeue(out) && out == 20);
+    q.enqueue(40);
+    CHECK(q.dequeue(out) && out == 30);
+    CHECK(q.dequeue(out) && out == 40);
+    CHECK(q.isEmpty());
+}
+
+// Queue case 2: cancel from front, middle and rear
+TEST(queue_case2_cancel_by_id) {
+    LinkedQueue<Req> q;
+    q.enqueue(Req{101, "Ali"});
+    q.enqueue(Req{102, "Sara"});
+    q.enqueue(Req{103, "Bilal"});
+    q.enqueue(Req{104, "Hina"});
+    CHECK(q.removeById(102));                       // middle
+    CHECK(queueIds(q) == std::vector<int>({101, 103, 104}));
+    CHECK(q.removeById(104));                       // rear (tail must move)
+    q.enqueue(Req{105, "Omar"});
+    CHECK(queueIds(q) == std::vector<int>({101, 103, 105}));
+    CHECK(q.removeById(101));                       // front
+    CHECK(!q.removeById(999));                      // not present
+    CHECK(queueIds(q) == std::vector<int>({103, 105}));
+    CHECK(q.size() == 2);
+}
+
+// Queue case 3: empty queue is safe; removing the only element resets tail
+TEST(queue_case3_empty_and_single) {
+    LinkedQueue<Req> q;
+    Req out{0, ""};
+    CHECK(!q.dequeue(out));
+    CHECK(!q.peekFront(out));
+    CHECK(!q.removeById(1));
+    q.enqueue(Req{7, "Zara"});
+    CHECK(q.removeById(7));
+    CHECK(q.isEmpty());
+    q.enqueue(Req{8, "Asad"});                      // tail was reset correctly
+    CHECK(q.dequeue(out) && out.id == 8);
+}
+
+TEST(queue_copy_is_deep) {
+    LinkedQueue<int> a;
+    a.enqueue(1); a.enqueue(2);
+    LinkedQueue<int> b = a;
+    int out = 0;
+    b.dequeue(out);
+    CHECK(a.size() == 2 && b.size() == 1);
+    a = b;
+    CHECK(a.size() == 1);
+}
+
+TEST(queue_large_input_10k) {
+    LinkedQueue<int> q;
+    for (int i = 0; i < 10000; ++i) q.enqueue(i);
+    CHECK(q.size() == 10000);
+    int out = -1;
+    bool inOrder = true;
+    for (int i = 0; i < 10000; ++i) {
+        if (!q.dequeue(out) || out != i) inOrder = false;
+    }
+    CHECK(inOrder && q.isEmpty());
+}
+
+// ====================================================================== BFS
+TEST(bfs_hops_and_reachability) {
+    Graph g = makeDryRunGraph();
+    std::vector<int> hops = BFS::hopsFrom(g, 0, 2);
+    // A:0  B,C:1  D,E:2  F:beyond 2 hops
+    CHECK(hops[0] == 0 && hops[1] == 1 && hops[2] == 1);
+    CHECK(hops[3] == 2 && hops[4] == 2 && hops[5] == -1);
+    CHECK(BFS::isReachable(g, 0, 5));
+    int gNode = g.addNode("G", 0, 0);
+    CHECK(!BFS::isReachable(g, 0, gNode));
+    CHECK(!BFS::isReachable(g, 0, 50));
+}
+
+TEST(bfs_blocked_roads_disconnect) {
+    Graph g = makeDryRunGraph();
+    // cut F off: block D-F and E-F
+    g.setBlocked(3, 5, true);
+    g.setBlocked(4, 5, true);
+    CHECK(!BFS::isReachable(g, 0, 5));
+    g.setBlocked(4, 5, false);
+    CHECK(BFS::isReachable(g, 0, 5));
+    int sum = BFS::sumWithinHops(g, 0, 1, [](int) { return 1; });
+    CHECK(sum == 3);   // A, B, C
 }
