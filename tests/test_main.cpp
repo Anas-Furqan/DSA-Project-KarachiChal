@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ds/Graph.h"
+#include "ds/MinHeap.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -120,4 +121,78 @@ TEST(graph_empty_and_invalid_queries) {
     CHECK(g.findRoad(0, 1) == -1);
     CHECK(!g.isUsable(0));
     CHECK(nearlyEqual(g.effectiveWeight(3), 0.0));
+}
+
+// ================================================================== MinHeap
+// Dry run "MinHeap case 1" in docs/DRY_RUNS.md
+TEST(heap_push_pop_order) {
+    MinHeap<int> h;
+    int input[] = {5, 3, 8, 1, 9, 2};
+    for (int x : input) h.push(x);
+    CHECK(h.size() == 6);
+    CHECK(h.isValidHeap());
+    // after pushes the array is [1, 3, 2, 5, 9, 8]
+    const std::vector<int>& arr = h.snapshot();
+    int expected[] = {1, 3, 2, 5, 9, 8};
+    for (int i = 0; i < 6; ++i) CHECK(arr[i] == expected[i]);
+    int out = 0, last = -1000;
+    while (h.popMin(out)) {
+        CHECK(out >= last);
+        last = out;
+    }
+    CHECK(h.isEmpty());
+}
+
+// Dry run "MinHeap case 2": pop from an empty / single-element heap
+TEST(heap_empty_and_single) {
+    MinHeap<int> h;
+    int out = 42;
+    CHECK(!h.popMin(out));
+    CHECK(out == 42);          // untouched
+    CHECK(!h.peek(out));
+    h.push(7);
+    CHECK(h.peek(out) && out == 7);
+    CHECK(h.popMin(out) && out == 7);
+    CHECK(!h.popMin(out));
+}
+
+// Dry run "MinHeap case 3": duplicates and negatives
+TEST(heap_duplicates_and_negatives) {
+    MinHeap<int> h;
+    int input[] = {4, -2, 4, 0, -2};
+    for (int x : input) h.push(x);
+    int expected[] = {-2, -2, 0, 4, 4};
+    int out = 0;
+    for (int i = 0; i < 5; ++i) CHECK(h.popMin(out) && out == expected[i]);
+}
+
+struct MaxFirst {
+    bool operator()(int a, int b) const { return a > b; }
+};
+
+TEST(heap_custom_comparator) {
+    MinHeap<int, MaxFirst> h;
+    h.push(1); h.push(10); h.push(5);
+    int out = 0;
+    CHECK(h.popMin(out) && out == 10);
+}
+
+TEST(heap_large_input_10k) {
+    MinHeap<int> h;
+    unsigned int seed = 12345;
+    for (int i = 0; i < 10000; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        h.push((int)(seed % 100000) - 50000);
+    }
+    CHECK(h.size() == 10000);
+    CHECK(h.isValidHeap());
+    int out = 0, last = -1000000, count = 0;
+    bool sorted = true;
+    while (h.popMin(out)) {
+        if (out < last) sorted = false;
+        last = out;
+        ++count;
+    }
+    CHECK(sorted);
+    CHECK(count == 10000);
 }
