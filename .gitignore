@@ -1,0 +1,12 @@
+# build outputs
+build/
+bin/
+*.exe
+*.o
+*.obj
+*.out
+
+# editor
+.vscode/
+.idea/
+*.swp
