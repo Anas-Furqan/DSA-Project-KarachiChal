@@ -15,6 +15,7 @@
 #include "core/Dijkstra.h"
 #include "core/BFS.h"
 #include "ds/LinkedQueue.h"
+#include "ds/HashTable.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -397,4 +398,78 @@ TEST(bfs_blocked_roads_disconnect) {
     CHECK(BFS::isReachable(g, 0, 5));
     int sum = BFS::sumWithinHops(g, 0, 1, [](int) { return 1; });
     CHECK(sum == 3);   // A, B, C
+}
+
+// ================================================================ HashTable
+TEST(hash_insert_find_erase) {
+    HashTable<int, std::string> t;
+    CHECK(t.insert(7, "Ali"));
+    CHECK(t.insert(15, "Sara"));
+    CHECK(!t.insert(7, "Ali K"));        // duplicate key overwrites
+    CHECK(t.size() == 2);
+    CHECK(t.find(7) && *t.find(7) == "Ali K");
+    CHECK(t.find(99) == nullptr);
+    CHECK(t.erase(7));
+    CHECK(!t.erase(7));                  // already gone
+    CHECK(!t.contains(7) && t.contains(15));
+    CHECK(t.size() == 1);
+}
+
+TEST(hash_string_keys_and_negatives) {
+    HashTable<std::string, int> names;
+    names.insert("saddar", 0);
+    names.insert("clifton", 1);
+    names.insert("", 2);                 // empty string is a valid key
+    CHECK(*names.find("clifton") == 1);
+    CHECK(*names.find("") == 2);
+    CHECK(names.find("Clifton") == nullptr);   // case sensitive by design
+    HashTable<int, int> neg;
+    neg.insert(-5, 1);
+    neg.insert(-2147483647, 2);
+    CHECK(*neg.find(-5) == 1 && *neg.find(-2147483647) == 2);
+}
+
+TEST(hash_rehash_10k) {
+    HashTable<int, int> t(4);
+    for (int i = 0; i < 10000; ++i) t.insert(i, i * 2);
+    CHECK(t.size() == 10000);
+    CHECK(t.rehashCount() > 0);
+    const double maxLoad = HashTable<int, int>::kMaxLoad;
+    CHECK(t.loadFactor() <= maxLoad);
+    bool allFound = true;
+    for (int i = 0; i < 10000; ++i) {
+        const int* v = t.find(i);
+        if (!v || *v != i * 2) allFound = false;
+    }
+    CHECK(allFound);
+    CHECK(t.longestChain() < 12);        // own hash spreads keys well
+    for (int i = 0; i < 10000; i += 2) t.erase(i);
+    CHECK(t.size() == 5000 && !t.contains(4) && t.contains(5));
+}
+
+struct CollideHasher {
+    unsigned int operator()(int) const { return 0; }   // every key -> bucket 0
+};
+
+TEST(hash_many_collisions_still_correct) {
+    HashTable<int, int, CollideHasher> t;
+    for (int i = 0; i < 500; ++i) t.insert(i, -i);
+    CHECK(t.size() == 500);
+    CHECK(t.longestChain() == 500);
+    CHECK(*t.find(250) == -250);
+    CHECK(t.erase(0) && t.erase(499) && t.erase(250));
+    CHECK(t.size() == 497 && !t.contains(250));
+}
+
+TEST(hash_get_or_insert_and_copy) {
+    HashTable<int, int> t;
+    t.getOrInsert(3, 0) += 5;
+    t.getOrInsert(3, 0) += 5;
+    CHECK(*t.find(3) == 10);
+    HashTable<int, int> copy = t;
+    copy.insert(4, 1);
+    CHECK(t.size() == 1 && copy.size() == 2);
+    int sum = 0;
+    copy.forEach([&sum](int, int& v) { sum += v; });
+    CHECK(sum == 11);
 }
