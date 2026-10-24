@@ -12,6 +12,7 @@
 
 #include "ds/Graph.h"
 #include "ds/MinHeap.h"
+#include "core/Dijkstra.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -195,4 +196,96 @@ TEST(heap_large_input_10k) {
     }
     CHECK(sorted);
     CHECK(count == 10000);
+}
+
+// ================================================================= Dijkstra
+// Shared 6-node graph used by every Dijkstra dry run in docs/DRY_RUNS.md:
+//   A-B 4, A-C 2, B-C 1, B-D 5, C-D 8, C-E 10, D-E 2, D-F 6, E-F 3
+static Graph makeDryRunGraph() {
+    Graph g;
+    const char* names[] = {"A", "B", "C", "D", "E", "F"};
+    for (int i = 0; i < 6; ++i) g.addNode(names[i], 0, i);
+    g.addEdge(0, 1, 4);  g.addEdge(0, 2, 2);  g.addEdge(1, 2, 1);
+    g.addEdge(1, 3, 5);  g.addEdge(2, 3, 8);  g.addEdge(2, 4, 10);
+    g.addEdge(3, 4, 2);  g.addEdge(3, 5, 6);  g.addEdge(4, 5, 3);
+    return g;
+}
+
+static bool pathIs(const PathResult& r, const std::vector<int>& expected) {
+    if (r.nodes.size() != expected.size()) return false;
+    for (size_t i = 0; i < expected.size(); ++i) if (r.nodes[i] != expected[i]) return false;
+    return true;
+}
+
+// Dijkstra case 1: A -> F, expected A C B D E F = 13
+TEST(dijkstra_case1_basic_shortest_path) {
+    Graph g = makeDryRunGraph();
+    PathResult r = Dijkstra::shortestPath(g, 0, 5);
+    CHECK(r.found);
+    CHECK(nearlyEqual(r.distance, 13.0));
+    CHECK(pathIs(r, {0, 2, 1, 3, 4, 5}));
+    CHECK(r.roads.size() == r.nodes.size() - 1);
+}
+
+// Dijkstra case 2: block D-E, A -> E becomes A C E = 12
+TEST(dijkstra_case2_blocked_edge) {
+    Graph g = makeDryRunGraph();
+    CHECK(g.setBlocked(3, 4, true));
+    PathResult r = Dijkstra::shortestPath(g, 0, 4);
+    CHECK(r.found);
+    CHECK(nearlyEqual(r.distance, 12.0));
+    CHECK(pathIs(r, {0, 2, 4}));
+}
+
+// Dijkstra case 3: isolated node G is unreachable
+TEST(dijkstra_case3_unreachable) {
+    Graph g = makeDryRunGraph();
+    int gNode = g.addNode("G", 9, 9);
+    PathResult r = Dijkstra::shortestPath(g, 0, gNode);
+    CHECK(!r.found);
+    CHECK(r.nodes.empty());
+}
+
+// Dijkstra case 4: traffic x3 on B-C, A -> D becomes A B D = 9
+TEST(dijkstra_case4_traffic_changes_route) {
+    Graph g = makeDryRunGraph();
+    CHECK(g.setTraffic(1, 2, 3.0));
+    PathResult r = Dijkstra::shortestPath(g, 0, 3);
+    CHECK(r.found);
+    CHECK(nearlyEqual(r.distance, 9.0));
+    CHECK(pathIs(r, {0, 1, 3}));
+}
+
+TEST(dijkstra_same_node_and_invalid) {
+    Graph g = makeDryRunGraph();
+    PathResult same = Dijkstra::shortestPath(g, 2, 2);
+    CHECK(same.found && nearlyEqual(same.distance, 0.0) && same.nodes.size() == 1);
+    CHECK(!Dijkstra::shortestPath(g, -1, 2).found);
+    CHECK(!Dijkstra::shortestPath(g, 0, 99).found);
+    Graph empty;
+    CHECK(!Dijkstra::shortestPath(empty, 0, 0).found);
+}
+
+TEST(dijkstra_find_nearest_target) {
+    Graph g = makeDryRunGraph();
+    // drivers waiting at D and E: from A, D (8) is closer than E (10)
+    NearestResult r = Dijkstra::findNearest(g, 0, [](int u) { return u == 3 || u == 4; });
+    CHECK(r.node == 3);
+    CHECK(nearlyEqual(r.path.distance, 8.0));
+    NearestResult none = Dijkstra::findNearest(g, 0, [](int) { return false; });
+    CHECK(none.node == -1);
+}
+
+TEST(dijkstra_trace_steps_record) {
+    Graph g = makeDryRunGraph();
+    DijkstraTrace t = Dijkstra::traceSteps(g, 0, 5);
+    CHECK(t.result.found && nearlyEqual(t.result.distance, 13.0));
+    // pops: A0 C2 B3 B4(stale) D8 D10(stale) E10 E12(stale) F13
+    CHECK(t.steps.size() == 9);
+    CHECK(t.steps[0].popped == 0 && t.steps[0].relaxed.size() == 2);
+    CHECK(t.steps[3].stale);
+    CHECK(t.steps.back().popped == 5);
+    DSTrace trace;
+    Dijkstra::shortestPath(g, 0, 5, &trace);
+    CHECK(trace.size() > 0 && !trace.truncated());
 }
