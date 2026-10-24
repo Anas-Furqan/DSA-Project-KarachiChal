@@ -16,6 +16,7 @@
 #include "core/BFS.h"
 #include "ds/LinkedQueue.h"
 #include "ds/HashTable.h"
+#include "ds/Trie.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -472,4 +473,80 @@ TEST(hash_get_or_insert_and_copy) {
     int sum = 0;
     copy.forEach([&sum](int, int& v) { sum += v; });
     CHECK(sum == 11);
+}
+
+// ===================================================================== Trie
+static void fillDryRunTrie(Trie& t) {
+    t.insert("Gulshan-e-Iqbal", 8);
+    t.insert("Gulistan-e-Johar", 9);
+    t.insert("Garden", 30);
+    t.insert("Saddar", 0);
+}
+
+// Trie case 1: prefix shared by two names, alphabetical order
+TEST(trie_case1_shared_prefix) {
+    Trie t;
+    fillDryRunTrie(t);
+    std::vector<TrieMatch> r = t.startsWith("gul");
+    CHECK(r.size() == 2);
+    CHECK(r.size() == 2 && r[0].word == "Gulistan-e-Johar" && r[0].value == 9);
+    CHECK(r.size() == 2 && r[1].word == "Gulshan-e-Iqbal" && r[1].value == 8);
+    CHECK(t.startsWith("g").size() == 3);
+}
+
+// Trie case 2: case-insensitive, narrows to one
+TEST(trie_case2_case_insensitive) {
+    Trie t;
+    fillDryRunTrie(t);
+    std::vector<TrieMatch> r = t.startsWith("GULS");
+    CHECK(r.size() == 1 && r[0].value == 8);
+    CHECK(t.contains("saddar") && t.contains("SADDAR"));
+    CHECK(!t.contains("sadd"));
+}
+
+// Trie case 3: prefix with no matches
+TEST(trie_case3_no_match) {
+    Trie t;
+    fillDryRunTrie(t);
+    CHECK(t.startsWith("xyz").empty());
+    CHECK(t.startsWith("gulz").empty());
+    CHECK(t.matchedLength("gulz") == 3);   // g-u-l exist, z does not
+}
+
+TEST(trie_edge_inputs) {
+    Trie t;
+    fillDryRunTrie(t);
+    CHECK(t.startsWith("").empty());               // empty query -> empty list
+    CHECK(t.startsWith("@#$").empty());            // special characters
+    CHECK(t.startsWith(std::string(500, 'g')).empty());   // very long query
+    CHECK(!t.insert("", 1));
+    CHECK(!t.insert("bad*name", 1));
+    CHECK(t.wordCount() == 4);
+    Trie empty;
+    CHECK(empty.startsWith("a").empty());
+}
+
+TEST(trie_limit_and_dedupe) {
+    Trie t;
+    const char* names[] = {"Area 1", "Area 2", "Area 3", "Area 4", "Area 5", "Area 6", "Area 7"};
+    for (int i = 0; i < 7; ++i) t.insert(names[i], i);
+    CHECK(t.startsWith("area").size() == 5);       // capped at 5
+    CHECK(t.startsWith("area", 10).size() == 7);
+    Trie alias;
+    alias.insert("Gulshan-e-Iqbal", 8);
+    alias.insert("iqbal", 8, "Gulshan-e-Iqbal");   // alias, same value
+    alias.insert("gulshan", 8, "Gulshan-e-Iqbal");
+    CHECK(alias.startsWith("gul").size() == 1);    // de-duplicated by value
+    CHECK(alias.startsWith("iq").size() == 1 && alias.startsWith("iq")[0].word == "Gulshan-e-Iqbal");
+}
+
+TEST(trie_branch_view) {
+    Trie t;
+    fillDryRunTrie(t);
+    std::vector<TrieViewNode> v = t.branchView("gu");
+    int onPath = 0;
+    for (const TrieViewNode& n : v) if (n.onPath) ++onPath;
+    CHECK(onPath == 3);                            // root, g, u
+    CHECK(v.size() > 3);
+    CHECK(t.branchView("").size() == 1);
 }
