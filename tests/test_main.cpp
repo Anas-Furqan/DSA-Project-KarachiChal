@@ -18,6 +18,7 @@
 #include "ds/HashTable.h"
 #include "ds/Trie.h"
 #include "ds/AVLTree.h"
+#include "ds/LinkedList.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -639,4 +640,45 @@ TEST(avl_large_input_stays_balanced) {
     CHECK(top.size() == 3 && top[0].ratingCenti == 9999 && top[2].ratingCenti == 9997);
     for (int i = 0; i < 10000; i += 3) t.remove(dk(i, i));
     CHECK(t.isValidAVL() && t.size() == 6666);
+}
+
+// =============================================================== LinkedList
+static std::vector<int> listValues(const LinkedList<int>& l) {
+    std::vector<int> out;
+    l.forEach([&out](int v) { out.push_back(v); });
+    return out;
+}
+
+TEST(list_push_front_newest_first) {
+    LinkedList<int> history;
+    history.pushFront(1001);
+    history.pushFront(1002);
+    history.pushFront(1003);
+    CHECK(listValues(history) == std::vector<int>({1003, 1002, 1001}));
+    int out = 0;
+    CHECK(history.front(out) && out == 1003);
+    CHECK(history.size() == 3);
+}
+
+TEST(list_remove_and_empty) {
+    LinkedList<int> l;
+    int out = 0;
+    CHECK(!l.popFront(out) && !l.front(out));
+    CHECK(!l.remove(5));
+    l.pushFront(3); l.pushFront(2); l.pushFront(2); l.pushFront(1);
+    CHECK(l.remove(2));                   // removes first of the duplicates
+    CHECK(listValues(l) == std::vector<int>({1, 2, 3}));
+    CHECK(l.remove(3) && l.remove(1) && l.contains(2) && l.size() == 1);
+    CHECK(l.popFront(out) && out == 2 && l.isEmpty());
+}
+
+TEST(list_copy_and_large) {
+    LinkedList<int> a;
+    for (int i = 0; i < 10000; ++i) a.pushFront(i);
+    LinkedList<int> b = a;
+    CHECK(b.size() == 10000);
+    int out = -1;
+    CHECK(b.front(out) && out == 9999);
+    b.clear();
+    CHECK(a.size() == 10000 && b.isEmpty());
 }
