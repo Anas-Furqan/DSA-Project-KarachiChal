@@ -596,7 +596,7 @@ select option { background: var(--panel-solid); }
 .chart-box { position: relative; flex: 1; min-height: 0; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
 .card-head h3 { margin: 0; }
-.leaderboard-card { overflow: hidden; }
+.leaderboard-card { overflow-y: auto; }
 .leaderboard { width: 100%; border-collapse: collapse; font-size: 12px; }
 .leaderboard th { text-align: left; color: var(--faint); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .leaderboard td { padding: 4px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-variant-numeric: tabular-nums; }
