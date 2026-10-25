@@ -20,6 +20,8 @@
 #include "ds/AVLTree.h"
 #include "ds/LinkedList.h"
 #include "core/CityMap.h"
+#include "core/Models.h"
+#include "core/SurgeEngine.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -742,4 +744,48 @@ TEST(citymap_real_karachi_file) {
     bool connected = true;
     for (int h : hops) if (h == -1) connected = false;
     CHECK(connected);
+}
+
+// =================================================================== Models
+TEST(models_fare_and_ride_type) {
+    CHECK(computeFare(RideType::BIKE, 10.0, 1.0) == 310);    // 60 + 25*10
+    CHECK(computeFare(RideType::MINI, 10.0, 1.0) == 520);    // 120 + 40*10
+    CHECK(computeFare(RideType::AC, 10.0, 1.5) == 1095);     // (180 + 550) * 1.5
+    CHECK(computeFare(RideType::MINI, 0.0, 1.0) == 120);
+    RideType t = RideType::BIKE;
+    CHECK(parseRideType("ac", t) && t == RideType::AC);
+    CHECK(parseRideType("Mini", t) && t == RideType::MINI);
+    CHECK(!parseRideType("RICKSHAW", t) && !parseRideType("", t));
+}
+
+TEST(models_event_order_ties) {
+    MinHeap<Event> h;
+    h.push(Event{5.0, EventType::RIDE_COMPLETED, 1, 0, 2});
+    h.push(Event{5.0, EventType::DRIVER_FREE, 2, 0, 1});
+    h.push(Event{1.0, EventType::DRIVER_ARRIVED_PICKUP, 3, 0, 3});
+    Event e{};
+    CHECK(h.popMin(e) && e.rideId == 3);
+    CHECK(h.popMin(e) && e.seq == 1);     // same time -> earlier seq first
+    CHECK(h.popMin(e) && e.seq == 2);
+}
+
+// ==================================================================== Surge
+TEST(surge_multiplier_steps) {
+    CHECK(SurgeEngine::multiplierFor(0, 0) == 1.0);
+    CHECK(SurgeEngine::multiplierFor(1, 3) == 1.0);    // ratio 0.33
+    CHECK(SurgeEngine::multiplierFor(3, 2) == 1.25);   // 1.5
+    CHECK(SurgeEngine::multiplierFor(5, 2) == 1.5);    // 2.5
+    CHECK(SurgeEngine::multiplierFor(4, 0) == 2.0);    // no drivers -> max(0,1)
+}
+
+TEST(surge_bfs_two_hops) {
+    Graph g = makeDryRunGraph();
+    SurgeEngine s;
+    // 3 requests at A; free drivers: 1 at F (3 hops away, ignored), 1 at C
+    s.recompute(g, [](int a) { return a == 0 ? 3 : 0; },
+                [](int a) { return (a == 5 || a == 2) ? 1 : 0; });
+    CHECK(s.infoAt(0).supply == 1);
+    CHECK(s.multiplierAt(0) == 2.0);
+    CHECK(s.multiplierAt(1) == 1.0);
+    CHECK(s.multiplierAt(99) == 1.0);
 }
