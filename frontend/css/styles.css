@@ -709,3 +709,6 @@ select option { background: var(--panel-solid); }
 .nodes .tnode { transition: transform 550ms var(--ease); }
 .trie-words { position: sticky; left: 0; padding: 8px 10px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border-top: 1px solid var(--border); }
 .trie-words span { padding: 1px 7px; border-radius: 999px; background: rgba(34, 211, 238, 0.12); color: #67e8f9; }
+.dryrun-active .car-marker, .dryrun-active .route-line { opacity: 0.12; }
+.dryrun-active .surge-circle, .dryrun-active .surge-tag { visibility: hidden; }
+.dr-heap em { color: var(--faint); font-style: normal; font-size: 11px; }

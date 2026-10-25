@@ -338,6 +338,36 @@ const MapView = {
     }
   },
 
+  // ------------------------------------------------------------ dry run
+  showDryRun(v) {
+    const layer = this.layers.dryrun;
+    layer.clearLayers();
+    this.map.getContainer().classList.add("dryrun-active");
+    const dot = (id, cls, r) => L.circleMarker(this.latLng(id), { radius: r, className: cls, fillOpacity: 1, interactive: false }).addTo(layer);
+
+    if (v.path) {
+      L.polyline(this.nodesToLatLngs(v.path), { className: "dr-path", interactive: false }).addTo(layer);
+    }
+    for (const r of v.relaxed) {
+      L.polyline([this.latLng(r.from), this.latLng(r.to)], { className: "dr-relax", interactive: false }).addTo(layer);
+    }
+    const settled = new Set(v.settled);
+    for (const id of new Set(v.frontier)) if (!settled.has(id)) dot(id, "dr-frontier", 10);
+    for (const id of settled) dot(id, "dr-settled", 10);
+    dot(v.popped, "dr-node", 14);
+    const label = (id, text) => L.marker(this.latLng(id), {
+      icon: L.divIcon({ className: "", html: `<span class="dr-label">${UI.escape(text)}</span>`, iconSize: [0, 0] }),
+      interactive: false, zIndexOffset: 4000,
+    }).addTo(layer);
+    label(v.popped, `${this.areas[v.popped].name} · ${v.poppedDist.toFixed(1)} km`);
+    if (v.to !== v.popped) label(v.to, `🏁 ${this.areas[v.to].name}`);
+  },
+
+  clearDryRun() {
+    this.layers.dryrun.clearLayers();
+    this.map.getContainer().classList.remove("dryrun-active");
+  },
+
   // ------------------------------------------------------------ hooks
   onState(s) {
     this.syncRoads(s.roads || []);
