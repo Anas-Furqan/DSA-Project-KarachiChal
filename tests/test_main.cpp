@@ -23,6 +23,7 @@
 #include "core/Models.h"
 #include "core/SurgeEngine.h"
 #include "core/Dispatcher.h"
+#include "core/Simulator.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -970,4 +971,83 @@ TEST(dispatch_analytics) {
     CHECK(a.busiest.size() == 2);
     CHECK(a.topEarnerId == 1 && a.topEarnings > 0);
     CHECK(a.avgFare > 0);
+}
+
+// ================================================================ Simulator
+TEST(sim_init_and_controls) {
+    Simulator sim;
+    std::string err;
+    CHECK(!Simulator().init("data/missing.json", err) && !err.empty());
+    CHECK(sim.init("data/karachi_map.json", err));
+    CHECK(sim.dispatcher().drivers().size() == Simulator::kDriverCount);
+    CHECK(sim.dispatcher().leaderboard().size() == Simulator::kDriverCount);
+    CHECK(sim.setSpeed(5) && sim.speed() == 5);
+    CHECK(!sim.setSpeed(3) && sim.speed() == 5);
+    sim.setPaused(true);
+    sim.advanceReal(10);
+    CHECK(nearlyEqual(sim.now(), 0.0));       // paused: clock frozen
+    sim.setPaused(false);
+    sim.advanceReal(2);
+    CHECK(nearlyEqual(sim.now(), 10.0));      // 2 s at 5x = 10 sim min
+}
+
+TEST(sim_same_seed_is_reproducible) {
+    Simulator a, b;
+    std::string err;
+    a.init("data/karachi_map.json", err);
+    b.init("data/karachi_map.json", err);
+    bool same = true;
+    for (int id = 1; id <= Simulator::kDriverCount; ++id) {
+        const Driver* x = a.dispatcher().findDriver(id);
+        const Driver* y = b.dispatcher().findDriver(id);
+        if (!x || !y || x->areaId != y->areaId || x->ratingCenti != y->ratingCenti || x->type != y->type) same = false;
+    }
+    CHECK(same);
+}
+
+TEST(sim_rush_hour_long_run_invariants) {
+    Simulator sim;
+    std::string err;
+    CHECK(sim.init("data/karachi_map.json", err));
+    sim.setRushHour(true);
+    for (int i = 0; i < 2400; ++i) sim.advanceSim(0.25);   // 10 sim hours
+    const Dispatcher& d = sim.dispatcher();
+    Analytics a = d.analytics();
+    CHECK(a.totalRides > 50);
+    CHECK(a.completed > 30);
+    CHECK(sim.dispatcher().queue().size() <= Simulator::kRushQueueCap + 3);
+    // every driver is consistent: free drivers have no ride, busy ones do
+    bool consistent = true;
+    d.drivers().forEach([&](int, const Driver& drv) {
+        if (drv.status == DriverStatus::AVAILABLE && drv.rideId != -1) consistent = false;
+        if (drv.status != DriverStatus::AVAILABLE && drv.rideId == -1) consistent = false;
+    });
+    CHECK(consistent);
+    CHECK(d.leaderboard().size() == Simulator::kDriverCount && d.leaderboard().isValidAVL());
+    CHECK(sim.events().isValidHeap());
+    DSTrace bg = sim.takeBackgroundTrace();
+    CHECK(bg.size() > 0);
+    CHECK(sim.takeBackgroundTrace().size() == 0);   // drained
+}
+
+TEST(sim_road_edits_validate) {
+    Simulator sim;
+    std::string err;
+    sim.init("data/karachi_map.json", err);
+    DSTrace t;
+    int saddar = sim.map().findAreaByName("Saddar");
+    int clifton = sim.map().findAreaByName("Clifton");
+    int malir = sim.map().findAreaByName("Malir");
+    CHECK(sim.setTraffic(saddar, clifton, 2.0, t).ok);
+    CHECK(sim.setTraffic(saddar, clifton, 0.0, t).code == "INVALID_TRAFFIC");
+    CHECK(sim.setTraffic(saddar, clifton, -1.0, t).code == "INVALID_TRAFFIC");
+    CHECK(sim.setTraffic(saddar, clifton, 3.5, t).code == "INVALID_TRAFFIC");
+    CHECK(sim.setTraffic(saddar, malir, 2.0, t).code == "ROAD_NOT_FOUND");
+    CHECK(sim.setTraffic(-1, clifton, 2.0, t).code == "INVALID_AREA");
+    CHECK(sim.setBlocked(saddar, clifton, true, t).ok);
+    OpResult again = sim.setBlocked(saddar, clifton, true, t);   // idempotent
+    CHECK(again.ok && again.message == "Road already blocked");
+    CHECK(sim.setBlocked(saddar, malir, true, t).code == "ROAD_NOT_FOUND");
+    CHECK(sim.reset(err));
+    CHECK(!sim.map().graph().road(sim.map().graph().findRoad(saddar, clifton)).blocked);   // reset clears blocks
 }
