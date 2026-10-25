@@ -22,6 +22,7 @@
 #include "core/CityMap.h"
 #include "core/Models.h"
 #include "core/SurgeEngine.h"
+#include "core/Dispatcher.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -788,4 +789,185 @@ TEST(surge_bfs_two_hops) {
     CHECK(s.multiplierAt(0) == 2.0);
     CHECK(s.multiplierAt(1) == 1.0);
     CHECK(s.multiplierAt(99) == 1.0);
+}
+
+// =============================================================== Dispatcher
+// Same 6-node graph as the Dijkstra dry runs, as a map file.
+static const char* kDryRunMapJson = R"({"areas":[
+  {"id":0,"name":"A","lat":24.80,"lng":67.00},{"id":1,"name":"B","lat":24.82,"lng":67.02},
+  {"id":2,"name":"C","lat":24.81,"lng":67.01},{"id":3,"name":"D","lat":24.84,"lng":67.03},
+  {"id":4,"name":"E","lat":24.85,"lng":67.04},{"id":5,"name":"F","lat":24.87,"lng":67.05}],
+ "roads":[{"from":0,"to":1,"km":4},{"from":0,"to":2,"km":2},{"from":1,"to":2,"km":1},
+  {"from":1,"to":3,"km":5},{"from":2,"to":3,"km":8},{"from":2,"to":4,"km":10},
+  {"from":3,"to":4,"km":2},{"from":3,"to":5,"km":6},{"from":4,"to":5,"km":3}]})";
+
+struct DispatchFixture {
+    CityMap map;
+    MinHeap<Event> events;
+    SimClock clock;
+    Dispatcher disp;
+    DSTrace trace;
+
+    DispatchFixture() : disp(map, events, clock) {
+        std::string err;
+        map.loadFromJsonText(kDryRunMapJson, err);
+        disp.reset(0, 1);
+    }
+    // pop and handle every event with time <= t, like Simulator does
+    void runUntil(double t) {
+        Event e{};
+        while (events.peek(e) && e.time <= t) {
+            events.popMin(e);
+            if (e.time > clock.now) clock.now = e.time;
+            disp.handleEvent(e, trace);
+        }
+        clock.now = t;
+    }
+    RideStatus status(int rideId) const { return disp.findRide(rideId)->status; }
+};
+
+TEST(dispatch_nearest_driver_and_fare) {
+    DispatchFixture f;
+    int dD = f.disp.addDriver("Driver D", RideType::MINI, 3, 450);
+    f.disp.addDriver("Driver E", RideType::MINI, 4, 490);
+    f.disp.addDriver("Bike B", RideType::BIKE, 1, 500);   // wrong type, ignored
+    OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    CHECK(r.ok);
+    const Ride* ride = f.disp.findRide(r.rideId);
+    CHECK(ride->status == RideStatus::ASSIGNED);
+    CHECK(ride->driverId == dD);               // D is 8 km away, E is 10 km
+    CHECK(ride->fare == 640);                  // 120 + 40 * 13 km
+    CHECK(nearlyEqual(ride->distanceKm, 13.0));
+    CHECK(f.trace.size() > 0);
+}
+
+TEST(dispatch_same_area_picks_best_rating) {
+    DispatchFixture f;
+    f.disp.addDriver("Low", RideType::AC, 2, 380);
+    int best = f.disp.addDriver("High", RideType::AC, 2, 495);
+    f.disp.addDriver("Mid", RideType::AC, 2, 420);
+    OpResult r = f.disp.requestRide("Sara", 0, 3, RideType::AC, false, f.trace);
+    CHECK(r.ok && f.disp.findRide(r.rideId)->driverId == best);
+}
+
+TEST(dispatch_validation_errors) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    CHECK(f.disp.addDriver("Bad", RideType::MINI, 77, 450) == -1);
+    CHECK(f.disp.requestRide("", 0, 1, RideType::MINI, false, f.trace).code == "MISSING_FIELD");
+    CHECK(f.disp.requestRide("   ", 0, 1, RideType::MINI, false, f.trace).code == "MISSING_FIELD");
+    CHECK(f.disp.requestRide(std::string(41, 'x'), 0, 1, RideType::MINI, false, f.trace).code == "INVALID_NAME");
+    CHECK(f.disp.requestRide("Ali", -1, 1, RideType::MINI, false, f.trace).code == "INVALID_AREA");
+    CHECK(f.disp.requestRide("Ali", 0, 99, RideType::MINI, false, f.trace).code == "INVALID_AREA");
+    OpResult same = f.disp.requestRide("Ali", 2, 2, RideType::MINI, false, f.trace);
+    CHECK(!same.ok && same.code == "SAME_LOCATION" && same.httpStatus == 400);
+    CHECK(f.disp.requestRide("Ali", 0, 1, RideType::MINI, false, f.trace).ok);
+    OpResult dup = f.disp.requestRide(" ali ", 0, 2, RideType::MINI, false, f.trace);   // same rider, other casing
+    CHECK(!dup.ok && dup.httpStatus == 409 && dup.code == "DUPLICATE_REQUEST");
+}
+
+TEST(dispatch_no_driver_goes_to_queue_then_served) {
+    DispatchFixture f;
+    OpResult none = f.disp.requestRide("Early", 0, 1, RideType::MINI, false, f.trace);
+    CHECK(none.ok && f.status(none.rideId) == RideStatus::WAITING);   // no drivers: queued, not an error
+    CHECK(f.disp.queue().size() == 1);
+    CHECK(f.disp.cancelRide(none.rideId, f.trace).ok);
+    CHECK(f.disp.queue().isEmpty());
+
+    f.disp.addDriver("Solo", RideType::MINI, 0, 450);
+    OpResult first = f.disp.requestRide("X", 0, 1, RideType::MINI, false, f.trace);
+    OpResult second = f.disp.requestRide("Y", 0, 2, RideType::MINI, false, f.trace);
+    CHECK(f.status(first.rideId) == RideStatus::ASSIGNED);
+    CHECK(f.status(second.rideId) == RideStatus::WAITING);
+    f.runUntil(500);
+    CHECK(f.status(first.rideId) == RideStatus::COMPLETED);
+    CHECK(f.status(second.rideId) == RideStatus::COMPLETED);   // served from the queue
+    CHECK(f.disp.queue().isEmpty());
+    CHECK(f.disp.historyOf("x") && f.disp.historyOf("x")->size() == 1);
+    CHECK(f.disp.findDriver(1)->tripsCompleted == 2);
+}
+
+TEST(dispatch_cancel_rules) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::BIKE, 3, 450);
+    OpResult r = f.disp.requestRide("Ali", 0, 1, RideType::BIKE, false, f.trace);
+    CHECK(f.status(r.rideId) == RideStatus::ASSIGNED);
+    CHECK(f.disp.cancelRide(r.rideId, f.trace).ok);            // ASSIGNED -> CANCELLED
+    CHECK(f.status(r.rideId) == RideStatus::CANCELLED);
+    CHECK(f.disp.findDriver(1)->status == DriverStatus::AVAILABLE);
+    OpResult again = f.disp.cancelRide(r.rideId, f.trace);
+    CHECK(!again.ok && again.code == "ALREADY_CANCELLED");
+    CHECK(f.disp.cancelRide(4242, f.trace).code == "RIDE_NOT_FOUND");
+    f.runUntil(100);                                           // stale events are ignored safely
+    CHECK(f.status(r.rideId) == RideStatus::CANCELLED);
+
+    OpResult done = f.disp.requestRide("Ali", 0, 1, RideType::BIKE, false, f.trace);
+    f.runUntil(1000);
+    CHECK(f.status(done.rideId) == RideStatus::COMPLETED);
+    CHECK(f.disp.cancelRide(done.rideId, f.trace).code == "ALREADY_COMPLETED");
+}
+
+TEST(dispatch_rating_rules) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 400);
+    OpResult r = f.disp.requestRide("Ali", 0, 1, RideType::MINI, false, f.trace);
+    CHECK(f.disp.rateRide(r.rideId, 5, f.trace).code == "NOT_COMPLETED");
+    f.runUntil(1000);
+    CHECK(f.disp.rateRide(r.rideId, 0, f.trace).code == "INVALID_RATING");
+    CHECK(f.disp.rateRide(r.rideId, 6, f.trace).code == "INVALID_RATING");
+    CHECK(f.disp.rateRide(r.rideId, 5, f.trace).ok);
+    CHECK(f.disp.rateRide(r.rideId, 4, f.trace).code == "ALREADY_RATED");
+    CHECK(f.disp.findDriver(1)->ratingCenti == 405);           // (4.0*20 + 5) / 21
+    CHECK(f.disp.leaderboard().contains(DriverKey{405, 1}));
+    CHECK(!f.disp.leaderboard().contains(DriverKey{400, 1}));
+    CHECK(f.disp.rateRide(999, 5, f.trace).code == "RIDE_NOT_FOUND");
+}
+
+TEST(dispatch_reroute_on_block) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    f.runUntil(2.0);                       // picked up at t=1, now on road A-C
+    CHECK(f.status(r.rideId) == RideStatus::IN_PROGRESS);
+    int roadDE = f.map.graph().findRoad(3, 4);
+    f.map.graph().setBlocked(3, 4, true);
+    f.disp.onRoadChanged(roadDE, f.trace);
+    const Ride* ride = f.disp.findRide(r.rideId);
+    // new route: A C B D F  (finish A-C, then C-B-D-F = 12 km)
+    CHECK(ride->tripNodes.size() == 5 && ride->tripNodes[3] == 3 && ride->tripNodes[4] == 5);
+    f.runUntil(500);
+    CHECK(f.status(r.rideId) == RideStatus::COMPLETED);
+    CHECK(nearlyEqual(ride->completeTime, 29.0));          // 1 + 4 (A-C) + 24 (12 km at 30 km/h)
+}
+
+TEST(dispatch_destination_unreachable_cancels) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    f.runUntil(2.0);
+    f.map.graph().setBlocked(3, 5, true);
+    f.disp.onRoadChanged(f.map.graph().findRoad(3, 5), f.trace);
+    f.map.graph().setBlocked(4, 5, true);
+    f.disp.onRoadChanged(f.map.graph().findRoad(4, 5), f.trace);
+    const Ride* ride = f.disp.findRide(r.rideId);
+    CHECK(ride->status == RideStatus::CANCELLED);
+    CHECK(ride->cancelReason == "Destination unreachable due to road block");
+    CHECK(f.disp.findDriver(1)->status == DriverStatus::AVAILABLE);
+    OpResult blocked = f.disp.requestRide("Sara", 0, 5, RideType::MINI, false, f.trace);
+    CHECK(!blocked.ok && blocked.code == "UNREACHABLE");
+}
+
+TEST(dispatch_analytics) {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    f.disp.requestRide("A1", 0, 1, RideType::MINI, false, f.trace);
+    OpResult c = f.disp.requestRide("A2", 2, 3, RideType::MINI, false, f.trace);
+    f.disp.cancelRide(c.rideId, f.trace);
+    f.runUntil(1000);
+    Analytics a = f.disp.analytics();
+    CHECK(a.totalRides == 2 && a.completed == 1 && a.cancelled == 1);
+    CHECK(a.byType[(int)RideType::MINI] == 2);
+    CHECK(a.busiest.size() == 2);
+    CHECK(a.topEarnerId == 1 && a.topEarnings > 0);
+    CHECK(a.avgFare > 0);
 }
