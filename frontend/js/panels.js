@@ -283,6 +283,13 @@ const Booking = {
 
   // called on every /api/state poll
   onState(s) {
+    // keep fare estimates honest when surge at the pickup changes
+    if (this.pickup !== null && !this.rideId) {
+      const z = (s.surge || []).find((x) => x.area === this.pickup);
+      const mult = z ? z.multiplier : 1;
+      if (this.lastPickupSurge !== undefined && mult !== this.lastPickupSurge) this.refreshRoute();
+      this.lastPickupSurge = mult;
+    }
     if (!this.rideId || this.finalShown) return;
     const ride = s.rides.find((r) => r.id === this.rideId);
     if (ride) {

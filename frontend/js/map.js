@@ -310,9 +310,38 @@ const MapView = {
     }
   },
 
+  // ------------------------------------------------------------ surge
+  // Areas whose BFS supply/demand ratio gives a multiplier > 1 pulse amber
+  // (1.25x), orange (1.5x) or red (2x).
+  surgeZones: new Map(),     // area id -> { circle, tag, mult }
+
+  syncSurge(list) {
+    const live = new Map(list.filter((x) => x.multiplier > 1).map((x) => [x.area, x]));
+    for (const [area, z] of this.surgeZones) {
+      if (!live.has(area)) { z.circle.remove(); z.tag.remove(); this.surgeZones.delete(area); }
+    }
+    for (const [area, info] of live) {
+      const cls = info.multiplier >= 2 ? "s200" : info.multiplier >= 1.5 ? "s150" : "s125";
+      const tip = `${this.areas[area].name}: ${info.demand} waiting / ${info.supply} free drivers within 2 hops → ${info.multiplier}x`;
+      let z = this.surgeZones.get(area);
+      if (z && z.mult === info.multiplier) { z.tag.setTooltipContent(tip); continue; }
+      if (z) { z.circle.remove(); z.tag.remove(); }
+      const circle = L.circle(this.latLng(area), {
+        radius: 700 + info.multiplier * 350, className: `surge-circle ${cls}`, weight: 1.5, interactive: false,
+      }).addTo(this.layers.surge);
+      const tag = L.marker(this.latLng(area), {
+        icon: L.divIcon({ className: "", html: `<span class="surge-tag ${info.multiplier >= 2 ? "hot" : ""}">⚡${info.multiplier}x</span>`, iconSize: [0, 0] }),
+        zIndexOffset: 2000,
+      }).addTo(this.layers.surge);
+      tag.bindTooltip(tip, { direction: "top", className: "car-tip" });
+      this.surgeZones.set(area, { circle, tag, mult: info.multiplier });
+    }
+  },
+
   // ------------------------------------------------------------ hooks
   onState(s) {
     this.syncRoads(s.roads || []);
     this.syncCars(s.drivers || []);
+    this.syncSurge(s.surge || []);
   },
 };
