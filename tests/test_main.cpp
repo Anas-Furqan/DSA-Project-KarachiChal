@@ -19,6 +19,7 @@
 #include "ds/Trie.h"
 #include "ds/AVLTree.h"
 #include "ds/LinkedList.h"
+#include "core/CityMap.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -681,4 +682,64 @@ TEST(list_copy_and_large) {
     CHECK(b.front(out) && out == 9999);
     b.clear();
     CHECK(a.size() == 10000 && b.isEmpty());
+}
+
+// ================================================================== CityMap
+static const char* kTinyMap =
+    "{\"areas\":[{\"id\":0,\"name\":\"Saddar\",\"lat\":24.85,\"lng\":67.02},"
+    "{\"id\":1,\"name\":\"Gulshan-e-Iqbal\",\"lat\":24.92,\"lng\":67.08},"
+    "{\"id\":2,\"name\":\"Clifton\",\"lat\":24.81,\"lng\":67.03}],"
+    "\"roads\":[{\"from\":0,\"to\":1,\"km\":9.5},{\"from\":0,\"to\":2,\"km\":5.1}]}";
+
+TEST(citymap_loads_valid_json) {
+    CityMap m;
+    std::string err;
+    CHECK(m.loadFromJsonText(kTinyMap, err));
+    CHECK(err.empty());
+    CHECK(m.areaCount() == 3 && m.graph().roadCount() == 2);
+    CHECK(m.findAreaByName("  SADDAR ") == 0);
+    CHECK(m.findAreaByName("Nowhere") == -1);
+    CHECK(m.search("iqb").size() == 1);           // alias token
+    CHECK(m.search("").empty());
+    CHECK(m.search(std::string(200, 'a')).empty());
+}
+
+TEST(citymap_rejects_bad_files) {
+    CityMap m;
+    std::string err;
+    CHECK(!m.loadFromFile("data/does_not_exist.json", err) && !err.empty());
+    CHECK(!m.loadFromJsonText("{not json", err));
+    CHECK(!m.loadFromJsonText("{\"areas\":[]}", err));
+    CHECK(!m.loadFromJsonText("{\"areas\":[],\"roads\":[]}", err));
+    // duplicate name (case-insensitive)
+    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0},"
+                              "{\"id\":1,\"name\":\"a\",\"lat\":0,\"lng\":0}],\"roads\":[]}", err));
+    CHECK(err.find("Duplicate area name") != std::string::npos);
+    // road to unknown area
+    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0}],"
+                              "\"roads\":[{\"from\":0,\"to\":9,\"km\":1}]}", err));
+    CHECK(err.find("unknown area") != std::string::npos);
+    // negative distance
+    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0},"
+                              "{\"id\":1,\"name\":\"B\",\"lat\":0,\"lng\":0}],"
+                              "\"roads\":[{\"from\":0,\"to\":1,\"km\":-2}]}", err));
+    CHECK(err.find("non-positive") != std::string::npos);
+    CHECK(m.areaCount() == 0);                    // failed load leaves map empty
+}
+
+TEST(citymap_real_karachi_file) {
+    CityMap m;
+    std::string err;
+    CHECK(m.loadFromFile("data/karachi_map.json", err));
+    CHECK(m.areaCount() >= 28 && m.areaCount() <= 30);
+    int saddar = m.findAreaByName("Saddar");
+    int airport = m.findAreaByName("Jinnah Airport");
+    CHECK(saddar >= 0 && airport >= 0);
+    PathResult r = Dijkstra::shortestPath(m.graph(), saddar, airport);
+    CHECK(r.found && r.distance > 0);
+    // the whole city is connected
+    std::vector<int> hops = BFS::hopsFrom(m.graph(), 0, -1);
+    bool connected = true;
+    for (int h : hops) if (h == -1) connected = false;
+    CHECK(connected);
 }
