@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KarachiChal</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2310b981'/%3E%3Cpath d='M9 22V10h3v5l5-5h4l-6 6 6 6h-4l-5-5v5z' fill='%230a0f1a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <!-- backend down banner -->
+  <div class="server-banner" id="serverBanner" hidden>
+    <span class="dot red"></span>
+    <span><strong>Server not running.</strong> Start <code>build/karachichal</code> and retry.</span>
+    <button class="btn btn-sm" id="retryBtn">Retry</button>
+  </div>
+
+  <!-- ===================================================== top bar -->
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="var(--accent)"/>
+        <path d="M9 22V10h3v5l5-5h4l-6 6 6 6h-4l-5-5v5z" fill="var(--bg)"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">KarachiChal</span>
+        <span class="brand-sub">Ride dispatch simulator</span>
+      </div>
+    </div>
+
+    <div class="sim-controls">
+      <div class="clock" title="Simulation clock (1 real second = 1 sim minute at 1x)">
+        <span class="clock-label">SIM</span>
+        <span class="clock-time" id="simClock">--:--</span>
+      </div>
+      <button class="icon-btn" id="playPauseBtn" title="Pause / resume">
+        <svg viewBox="0 0 24 24" class="ic-pause"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>
+        <svg viewBox="0 0 24 24" class="ic-play"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <div class="segmented" id="speedControl" role="group" aria-label="Simulation speed">
+        <button data-speed="1" class="active">1x</button>
+        <button data-speed="2">2x</button>
+        <button data-speed="5">5x</button>
+      </div>
+      <label class="toggle" title="Spawn random requests every 2 sim minutes">
+        <input type="checkbox" id="rushToggle">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label">Rush hour</span>
+      </label>
+    </div>
+
+    <div class="counters">
+      <div class="counter"><span class="counter-value" id="cntActive">0</span><span class="counter-label">Active rides</span></div>
+      <div class="counter"><span class="counter-value amber" id="cntWaiting">0</span><span class="counter-label">Waiting</span></div>
+      <div class="counter"><span class="counter-value accent" id="cntFree">0</span><span class="counter-label">Free drivers</span></div>
+    </div>
+
+    <div class="top-actions">
+      <label class="toggle" title="Click any road on the map to change traffic or block it">
+        <input type="checkbox" id="adminToggle">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label">Admin</span>
+      </label>
+      <button class="btn btn-ghost" id="dryRunBtn">Dry Run Dijkstra</button>
+      <button class="btn btn-ghost" id="analyticsBtn">Analytics</button>
+      <button class="icon-btn" id="resetBtn" title="Reset simulation">
+        <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===================================================== main -->
+  <main class="layout">
+    <!-- left: booking -->
+    <aside class="panel panel-left" id="leftPanel">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="book">Book a Ride</button>
+        <button class="tab" data-tab="history">History</button>
+      </div>
+
+      <section class="tab-body active" data-tab-body="book">
+        <div class="field">
+          <label for="riderName">Rider name</label>
+          <input id="riderName" type="text" maxlength="40" placeholder="e.g. Anas" autocomplete="off">
+        </div>
+
+        <div class="field search-field">
+          <div class="field-head">
+            <label for="pickupInput">Pickup</label>
+            <span class="ds-chip" data-ds="Trie" data-tip="Every keystroke walks the Trie one character per level: O(L) to reach the prefix, then collects up to 5 names. Independent of how many areas exist.">Trie · O(L)</span>
+          </div>
+          <div class="search-box">
+            <span class="pin pin-pickup"></span>
+            <input id="pickupInput" type="text" placeholder="Search area…" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list">
+            <ul class="suggestions" role="listbox"></ul>
+          </div>
+        </div>
+
+        <div class="field search-field">
+          <label for="dropInput">Drop</label>
+          <div class="search-box">
+            <span class="pin pin-drop"></span>
+            <input id="dropInput" type="text" placeholder="Search area…" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list">
+            <ul class="suggestions" role="listbox"></ul>
+          </div>
+        </div>
+
+        <div class="route-summary" id="routeSummary" hidden>
+          <span id="routeKm">–</span><span class="sep">·</span><span id="routeEta">–</span>
+          <span class="surge-badge" id="routeSurge" hidden></span>
+        </div>
+
+        <div class="ride-types" id="rideTypes">
+          <button class="ride-type" data-type="BIKE">
+            <svg viewBox="0 0 40 24" class="rt-icon"><circle cx="8" cy="17" r="5"/><circle cx="32" cy="17" r="5"/><path d="M8 17l8-9h7l4 9M16 8l-2-3h-4M23 8l3-2h3"/></svg>
+            <span class="rt-name">Bike</span>
+            <span class="rt-fare" data-fare="BIKE"><span class="skeleton sk-text"></span></span>
+          </button>
+          <button class="ride-type active" data-type="MINI">
+            <svg viewBox="0 0 40 24" class="rt-icon"><path d="M4 16v-4l4-6h18l6 6h4v4z"/><circle cx="11" cy="17" r="3"/><circle cx="29" cy="17" r="3"/></svg>
+            <span class="rt-name">Mini</span>
+            <span class="rt-fare" data-fare="MINI"><span class="skeleton sk-text"></span></span>
+          </button>
+          <button class="ride-type" data-type="AC">
+            <svg viewBox="0 0 40 24" class="rt-icon"><path d="M3 16v-5l5-6h20l7 6h2v5z"/><circle cx="11" cy="17" r="3"/><circle cx="29" cy="17" r="3"/><path d="M15 8h3M21 8h3"/></svg>
+            <span class="rt-name">AC Car</span>
+            <span class="rt-fare" data-fare="AC"><span class="skeleton sk-text"></span></span>
+          </button>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="findDriverBtn">
+          <span class="btn-label">Find Driver</span>
+          <span class="spinner" hidden></span>
+        </button>
+        <div class="chip-row">
+          <span class="ds-chip" data-ds="MinHeap" data-tip="Dijkstra expands outward from the pickup using a Min-Heap; the first area popped that has a free driver of your type is the nearest one. Each push/pop is O(log n).">Nearest driver → Min-Heap · O(log n)</span>
+          <span class="ds-chip" data-ds="HashTable" data-tip="Drivers, rides and riders are looked up by key in hash tables with separate chaining: O(1) on average.">Driver/ride lookup → Hash Table · O(1) avg</span>
+        </div>
+
+        <!-- active ride card -->
+        <div class="ride-card" id="rideCard" hidden>
+          <div class="ride-card-head">
+            <div>
+              <div class="ride-id" id="rcId">Ride</div>
+              <div class="ride-route" id="rcRoute"></div>
+            </div>
+            <span class="status-pill" id="rcStatus">WAITING</span>
+          </div>
+          <div class="driver-row" id="rcDriverRow">
+            <div class="avatar" id="rcAvatar">?</div>
+            <div class="driver-meta">
+              <div class="driver-name" id="rcDriver">Looking for a driver…</div>
+              <div class="driver-sub" id="rcDriverSub"></div>
+            </div>
+            <div class="eta">
+              <span class="eta-value" id="rcEta">–</span>
+              <span class="eta-label" id="rcEtaLabel">ETA</span>
+            </div>
+          </div>
+          <div class="fare-row">
+            <span>Fare</span>
+            <span><span class="surge-badge" id="rcSurge" hidden></span><strong id="rcFare">Rs –</strong></span>
+          </div>
+          <ol class="timeline" id="rcTimeline">
+            <li data-step="WAITING">Requested</li>
+            <li data-step="ASSIGNED">Driver on the way</li>
+            <li data-step="IN_PROGRESS">On trip</li>
+            <li data-step="COMPLETED">Arrived</li>
+          </ol>
+          <div class="cancel-reason" id="rcReason" hidden></div>
+          <div class="rate-box" id="rcRate" hidden>
+            <span>Rate your driver</span>
+            <div class="stars" id="rcStars">
+              <button data-star="1">★</button><button data-star="2">★</button><button data-star="3">★</button><button data-star="4">★</button><button data-star="5">★</button>
+            </div>
+          </div>
+          <div class="ride-actions">
+            <button class="btn btn-danger btn-block" id="cancelRideBtn">Cancel ride</button>
+            <button class="btn btn-ghost btn-block" id="newRideBtn" hidden>Book another ride</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-body" data-tab-body="history">
+        <div class="field">
+          <div class="field-head">
+            <label for="historyName">Rider</label>
+            <span class="ds-chip" data-ds="LinkedList" data-tip="Each rider's history is a singly linked list. A finished ride is pushed at the head in O(1), so traversal is newest first.">Ride history → Singly Linked List · O(1) insert</span>
+          </div>
+          <div class="inline-form">
+            <input id="historyName" type="text" maxlength="40" placeholder="Rider name" autocomplete="off">
+            <button class="btn" id="historyBtn">Show</button>
+          </div>
+        </div>
+        <div class="history-list" id="historyList">
+          <p class="empty">Enter a rider name to see their rides, newest first.</p>
+        </div>
+      </section>
+    </aside>
+
+    <!-- center: map -->
+    <section class="map-wrap">
+      <div id="map"></div>
+      <div class="map-overlay map-chips">
+        <span class="ds-chip" data-ds="Graph" data-tip="Areas are nodes and roads are weighted edges in an adjacency list. Every route is computed by our C++ Dijkstra over this graph.">Map roads &amp; routes → Graph (Adjacency List) + Dijkstra · O((V+E) log V)</span>
+        <span class="ds-chip" data-ds="BFS" data-tip="Surge: BFS counts free drivers within 2 hops of an area; a hash table holds pending requests per area. Ratio requests/drivers sets the multiplier.">Surge zones → BFS + Hash Table · O(V+E)</span>
+      </div>
+      <div class="map-overlay map-legend">
+        <span><i class="lg-line normal"></i>Road</span>
+        <span><i class="lg-line amber"></i>Traffic 2x</span>
+        <span><i class="lg-line red"></i>Traffic 3x</span>
+        <span><i class="lg-line blocked"></i>Blocked</span>
+        <span><i class="lg-line toPickup"></i>To pickup</span>
+        <span><i class="lg-line trip"></i>Trip</span>
+      </div>
+      <div class="admin-hint" id="adminHint" hidden>Admin mode: click a road to set traffic or block it</div>
+    </section>
+
+    <!-- right: DS inspector -->
+    <aside class="panel panel-right" id="rightPanel">
+      <div class="panel-title">
+        <span>DS Inspector</span>
+        <span class="live-dot" title="Live"></span>
+      </div>
+      <div class="tabs tabs-scroll" role="tablist">
+        <button class="tab active" data-itab="log">Live Log</button>
+        <button class="tab" data-itab="heap">Heap</button>
+        <button class="tab" data-itab="queue">Queue</button>
+        <button class="tab" data-itab="hash">Hash Table</button>
+        <button class="tab" data-itab="trie">Trie</button>
+        <button class="tab" data-itab="avl">AVL</button>
+      </div>
+
+      <section class="itab-body active" data-itab-body="log">
+        <div class="log-toolbar">
+          <select id="logFilter" aria-label="Filter by data structure">
+            <option value="">All structures</option>
+          </select>
+          <button class="btn btn-sm btn-ghost" id="logClear">Clear</button>
+        </div>
+        <div class="log" id="traceLog">
+          <div class="skeleton sk-row"></div><div class="skeleton sk-row"></div><div class="skeleton sk-row"></div>
+        </div>
+      </section>
+
+      <section class="itab-body" data-itab-body="heap">
+        <div class="insp-head">
+          <span class="ds-chip" data-ds="MinHeap" data-tip="Scheduled simulation events in an array-based binary min-heap keyed by time. Each tick pops every event whose time has come.">Sim events → Min-Heap (Event Scheduler) · O(log n)</span>
+          <span class="insp-stat" id="heapStat"></span>
+        </div>
+        <div class="viz" id="heapViz"></div>
+        <div class="viz-array" id="heapArray"></div>
+      </section>
+
+      <section class="itab-body" data-itab-body="queue">
+        <div class="insp-head">
+          <span class="ds-chip" data-ds="LinkedQueue" data-tip="Requests with no reachable free driver wait in a linked FIFO queue: enqueue at rear and dequeue at front are O(1); cancelling unlinks from the middle in O(n).">Waiting requests → Queue · O(1) enqueue/dequeue</span>
+          <span class="insp-stat" id="queueStat"></span>
+        </div>
+        <div class="queue-track" id="queueViz"></div>
+      </section>
+
+      <section class="itab-body" data-itab-body="hash">
+        <div class="insp-head">
+          <span class="ds-chip" data-ds="HashTable" data-tip="Separate chaining: each bucket holds a linked chain. Load factor above 0.75 doubles the buckets (rehash).">Driver/ride lookup → Hash Table · O(1) avg</span>
+          <div class="segmented segmented-sm" id="hashTableSel">
+            <button data-table="drivers" class="active">Drivers</button>
+            <button data-table="rides">Rides</button>
+          </div>
+        </div>
+        <div class="hash-stats" id="hashStats"></div>
+        <div class="hash-viz" id="hashViz"></div>
+      </section>
+
+      <section class="itab-body" data-itab-body="trie">
+        <div class="insp-head">
+          <span class="ds-chip" data-ds="Trie" data-tip="Type in Pickup or Drop. The highlighted path is the prefix walk; the subtree below holds every completion.">Search box → Trie · O(L)</span>
+          <span class="insp-stat" id="trieStat"></span>
+        </div>
+        <div class="viz" id="trieViz"></div>
+      </section>
+
+      <section class="itab-body" data-itab-body="avl">
+        <div class="insp-head">
+          <span class="ds-chip" data-ds="AVLTree" data-tip="Leaderboard keyed by (rating desc, driver id). A rating change is delete + reinsert; rotations keep the height O(log n).">Leaderboard → AVL Tree · O(log n)</span>
+          <span class="insp-stat" id="avlStat"></span>
+        </div>
+        <div class="viz" id="avlViz"></div>
+        <div class="rotation-log" id="avlRotations"></div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- ===================================================== analytics drawer -->
+  <section class="drawer" id="analyticsDrawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2>Analytics</h2>
+      <button class="icon-btn" id="closeDrawer" title="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="stat-tiles" id="statTiles">
+      <div class="tile"><span class="tile-label">Total rides</span><span class="tile-value" data-stat="totalRides">0</span></div>
+      <div class="tile"><span class="tile-label">Completed</span><span class="tile-value accent" data-stat="completed">0</span></div>
+      <div class="tile"><span class="tile-label">Cancelled</span><span class="tile-value red" data-stat="cancelled">0</span></div>
+      <div class="tile"><span class="tile-label">Avg wait</span><span class="tile-value" data-stat="avgWaitMin">0</span><span class="tile-unit">min</span></div>
+      <div class="tile"><span class="tile-label">Avg fare</span><span class="tile-value" data-stat="avgFare">0</span><span class="tile-unit">Rs</span></div>
+      <div class="tile"><span class="tile-label">Top earner</span><span class="tile-value small" id="topEarner">–</span></div>
+    </div>
+    <div class="charts">
+      <div class="chart-card"><h3>Rides per sim hour</h3><div class="chart-box"><canvas id="chartHourly"></canvas></div></div>
+      <div class="chart-card"><h3>Rides by type</h3><div class="chart-box"><canvas id="chartTypes"></canvas></div></div>
+      <div class="chart-card"><h3>Busiest pickup areas</h3><div class="chart-box"><canvas id="chartBusiest"></canvas></div></div>
+      <div class="chart-card leaderboard-card">
+        <div class="card-head">
+          <h3>Driver leaderboard</h3>
+          <span class="ds-chip" data-ds="AVLTree" data-tip="Top 10 = first 10 nodes of an in-order walk of the AVL tree (rating desc).">Leaderboard → AVL Tree · O(log n)</span>
+        </div>
+        <table class="leaderboard">
+          <thead><tr><th>#</th><th>Driver</th><th>Type</th><th>Rating</th><th>Trips</th></tr></thead>
+          <tbody id="leaderboardBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== dry run -->
+  <section class="sheet" id="dryRunSheet" aria-hidden="true">
+    <div class="sheet-head">
+      <div>
+        <h2>Dijkstra Dry Run</h2>
+        <span class="ds-chip" data-ds="Dijkstra" data-tip="Each step pops the closest unsettled area from the Min-Heap and relaxes its roads.">Graph + Dijkstra · O((V+E) log V)</span>
+      </div>
+      <button class="icon-btn" id="closeDryRun" title="Close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="dr-form">
+      <select id="drFrom" aria-label="From"></select>
+      <span class="arrow">→</span>
+      <select id="drTo" aria-label="To"></select>
+      <button class="btn btn-primary" id="drLoad">Run</button>
+    </div>
+    <div class="dr-controls">
+      <button class="btn btn-sm" id="drPrev">Prev</button>
+      <button class="btn btn-sm" id="drPlay">Play</button>
+      <button class="btn btn-sm" id="drNext">Next</button>
+      <input type="range" id="drScrub" min="0" max="0" value="0" aria-label="Step">
+      <span class="dr-step" id="drStep">Step 0 / 0</span>
+    </div>
+    <p class="dr-explain" id="drExplain">Pick two areas and press Run.</p>
+    <div class="dr-grid">
+      <div>
+        <h4>Distance table</h4>
+        <div class="dr-table-wrap"><table class="dr-table" id="drTable"></table></div>
+      </div>
+      <div>
+        <h4>Heap (sorted view)</h4>
+        <div class="dr-heap" id="drHeap"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
