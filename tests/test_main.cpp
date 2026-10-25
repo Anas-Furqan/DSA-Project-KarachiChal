@@ -1051,3 +1051,16 @@ TEST(sim_road_edits_validate) {
     CHECK(sim.reset(err));
     CHECK(!sim.map().graph().road(sim.map().graph().findRoad(saddar, clifton)).blocked);   // reset clears blocks
 }
+
+TEST(dispatch_block_updates_planned_trip) {
+    DispatchFixture f;
+    f.disp.addDriver("Far", RideType::MINI, 5, 450);          // at F: still driving to pickup A
+    OpResult r = f.disp.requestRide("Ali", 0, 3, RideType::MINI, false, f.trace);
+    CHECK(f.status(r.rideId) == RideStatus::ASSIGNED);
+    // planned trip A C B D; block B-D -> planned trip must change before pickup
+    f.map.graph().setBlocked(1, 3, true);
+    f.disp.onRoadChanged(f.map.graph().findRoad(1, 3), f.trace);
+    const Ride* ride = f.disp.findRide(r.rideId);
+    CHECK(ride->status == RideStatus::ASSIGNED);
+    CHECK(ride->tripNodes.size() == 3 && ride->tripNodes[1] == 2);   // A C D (10 km)
+}

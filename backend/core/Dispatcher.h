@@ -190,6 +190,7 @@ private:
     bool tryAssign(Ride& r, DSTrace& trace);
     void assignDriver(Ride& r, Driver& d, const PathResult& driverToPickup, DSTrace& trace);
     void reroute(Ride& r, Driver& d, DSTrace& trace);
+    bool pathUsesRoad(const std::vector<int>& nodes, int roadId) const;   // O(len * deg)
     void onArrivedPickup(Ride& r, DSTrace& trace);
     void onRideCompleted(Ride& r, DSTrace& trace);
     void onDriverFree(Ride& r, DSTrace& trace);

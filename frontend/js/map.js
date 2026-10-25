@@ -104,7 +104,56 @@ const MapView = {
     this.syncRoads([]);
   },
 
-  onRoadClick() { /* admin popover added with traffic controls */ },
+  // Admin popover: set traffic 1x/2x/3x or block/unblock. The backend then
+  // re-routes every active ride whose remaining path uses this road.
+  onRoadClick(roadId, latlng) {
+    if (!document.body.classList.contains("admin-mode")) return;
+    const r = this.roads.find((x) => x.id === roadId);
+    if (!r) return;
+    const name = (id) => UI.escape(this.areas[id].name);
+    const t = r.traffic;
+    const html = `<div class="road-pop">
+        <h4>${name(r.from)} ↔ ${name(r.to)}</h4>
+        <div class="rp-sub">${r.km.toFixed(1)} km base · effective ${(r.km * t).toFixed(1)} km · road #${r.id}</div>
+        <div class="rp-row">
+          <button data-f="1" class="${t < 1.5 ? "active" : ""}">1x</button>
+          <button data-f="2" class="t2 ${t >= 1.5 && t < 2.5 ? "active" : ""}">2x</button>
+          <button data-f="3" class="t3 ${t >= 2.5 ? "active" : ""}">3x</button>
+        </div>
+        <button class="rp-block ${r.blocked ? "unblock" : ""}">${r.blocked ? "Unblock road" : "Block road"}</button>
+      </div>`;
+    const popup = L.popup({ closeButton: true, autoPanPadding: [40, 40] }).setLatLng(latlng).setContent(html).openOn(this.map);
+    const root = popup.getElement();
+    root.querySelectorAll("button[data-f]").forEach((b) =>
+      b.addEventListener("click", () => this.setTraffic(r, Number(b.dataset.f), popup)));
+    root.querySelector(".rp-block").addEventListener("click", () => this.setBlocked(r, !r.blocked, popup));
+  },
+
+  async setTraffic(r, factor, popup) {
+    try {
+      await API.post("/api/road/traffic", { from: r.from, to: r.to, factor });
+      r.traffic = factor;
+      this.styleRoad(r);
+      popup.close();
+      UI.toast(`Traffic ${factor}x`, `${this.areas[r.from].name} ↔ ${this.areas[r.to].name}. Rides using it were re-routed.`, factor > 1 ? "warn" : "info");
+      App.schedulePoll(0);
+    } catch (e) {
+      UI.error(e, "Traffic update failed");
+    }
+  },
+
+  async setBlocked(r, blocked, popup) {
+    try {
+      const res = await API.post("/api/road/block", { from: r.from, to: r.to, blocked });
+      r.blocked = blocked;
+      this.styleRoad(r);
+      popup.close();
+      UI.toast(res.message, `${this.areas[r.from].name} ↔ ${this.areas[r.to].name}`, blocked ? "warn" : "info");
+      App.schedulePoll(0);
+    } catch (e) {
+      UI.error(e, "Road update failed");
+    }
+  },
 
   // ------------------------------------------------------------ areas
   drawAreas() {

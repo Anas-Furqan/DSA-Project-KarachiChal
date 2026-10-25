@@ -422,6 +422,12 @@ void Dispatcher::onDriverFree(Ride& r, DSTrace& trace) {
 
 // ----------------------------------------------------------------- traffic
 
+bool Dispatcher::pathUsesRoad(const std::vector<int>& nodes, int roadId) const {
+    for (size_t i = 0; i + 1 < nodes.size(); ++i)
+        if (map_.graph().findRoad(nodes[i], nodes[i + 1]) == roadId) return true;
+    return false;
+}
+
 void Dispatcher::reroute(Ride& r, Driver& d, DSTrace& trace) {
     double now = clock_.now;
     if (!d.motion.active() || now >= d.motion.endTime()) return;
@@ -486,7 +492,19 @@ void Dispatcher::onRoadChanged(int roadId, DSTrace& trace) {
     double now = clock_.now;
     for (int id : ids) {
         Ride* r = rides_.find(id);
-        if (!r || (r->status != RideStatus::ASSIGNED && r->status != RideStatus::IN_PROGRESS)) continue;
+        if (!r) continue;
+        // planned trip (pickup -> drop) of rides not yet picked up
+        if ((r->status == RideStatus::ASSIGNED || r->status == RideStatus::WAITING) && pathUsesRoad(r->tripNodes, roadId)) {
+            PathResult trip = Dijkstra::shortestPath(map_.graph(), r->pickup, r->drop, &trace);
+            if (!trip.found) {
+                bool freesDriver = r->status == RideStatus::ASSIGNED;
+                forceCancel(*r, "Destination unreachable due to road block", trace);
+                if (freesDriver) processQueue(trace);
+                continue;
+            }
+            r->tripNodes = trip.nodes;
+        }
+        if (r->status != RideStatus::ASSIGNED && r->status != RideStatus::IN_PROGRESS) continue;
         Driver* d = drivers_.find(r->driverId);
         if (!d || !d->motion.active() || now >= d->motion.endTime()) continue;
         int current = d->motion.legAt(now);
