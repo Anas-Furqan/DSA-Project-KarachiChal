@@ -17,6 +17,7 @@
 #include "ds/LinkedQueue.h"
 #include "ds/HashTable.h"
 #include "ds/Trie.h"
+#include "ds/AVLTree.h"
 
 // ---------------------------------------------------------------- framework
 struct TestCase {
@@ -549,4 +550,93 @@ TEST(trie_branch_view) {
     CHECK(onPath == 3);                            // root, g, u
     CHECK(v.size() > 3);
     CHECK(t.branchView("").size() == 1);
+}
+
+// ================================================================== AVLTree
+// Leaderboard order is rating DESC, so a higher rating is a "smaller" key.
+// Inserting ratings 3.00, 2.00, 1.00 is like inserting 1, 2, 3 in a normal BST.
+static DriverKey dk(int ratingCenti, int id) { return DriverKey{ratingCenti, id}; }
+
+// AVL case 1 (RR): 300, 200, 100 -> left rotate at 300
+TEST(avl_case1_rr_rotation) {
+    AVLTree t;
+    t.insert(dk(300, 1));
+    t.insert(dk(200, 2));
+    CHECK(t.lastRotations().empty());
+    t.insert(dk(100, 3));
+    CHECK(t.rotationCount("RR") == 1);
+    CHECK(t.height() == 2 && t.isValidAVL());
+    std::vector<AVLViewNode> v = t.view();
+    CHECK(v[0].key.driverId == 2);       // new root is 2.00
+}
+
+// AVL case 2 (LL): 100, 200, 300 -> right rotate at 100
+TEST(avl_case2_ll_rotation) {
+    AVLTree t;
+    t.insert(dk(100, 1));
+    t.insert(dk(200, 2));
+    t.insert(dk(300, 3));
+    CHECK(t.rotationCount("LL") == 1);
+    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+}
+
+// AVL case 3 (LR): 100, 300, 200 -> left rotate at 300, right rotate at 100
+TEST(avl_case3_lr_rotation) {
+    AVLTree t;
+    t.insert(dk(100, 1));
+    t.insert(dk(300, 3));
+    t.insert(dk(200, 2));
+    CHECK(t.rotationCount("LR") == 1);
+    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+}
+
+// AVL case 4 (RL): 300, 100, 200 -> right rotate at 100, left rotate at 300
+TEST(avl_case4_rl_rotation) {
+    AVLTree t;
+    t.insert(dk(300, 3));
+    t.insert(dk(100, 1));
+    t.insert(dk(200, 2));
+    CHECK(t.rotationCount("RL") == 1);
+    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+}
+
+TEST(avl_duplicate_ratings_tie_break) {
+    AVLTree t;
+    t.insert(dk(450, 7));
+    t.insert(dk(450, 3));
+    t.insert(dk(450, 5));
+    t.insert(dk(490, 9));
+    CHECK(!t.insert(dk(450, 3)));         // exact duplicate key rejected
+    CHECK(t.size() == 4);
+    std::vector<DriverKey> top = t.topN(10);
+    CHECK(top.size() == 4);
+    CHECK(top[0].driverId == 9 && top[1].driverId == 3 && top[2].driverId == 5 && top[3].driverId == 7);
+}
+
+TEST(avl_delete_and_update_rating) {
+    AVLTree t;
+    for (int i = 1; i <= 7; ++i) t.insert(dk(400 + i * 10, i));
+    CHECK(!t.remove(dk(999, 1)));         // non-existent key
+    CHECK(!t.remove(dk(410, 2)));         // right id, wrong rating
+    CHECK(t.remove(dk(440, 4)));          // node with two children
+    CHECK(t.size() == 6 && t.isValidAVL() && !t.contains(dk(440, 4)));
+    // rating update for driver 1: 4.10 -> 4.95 = delete + reinsert
+    CHECK(t.remove(dk(410, 1)));
+    CHECK(t.insert(dk(495, 1)));
+    CHECK(t.topN(1)[0].driverId == 1);
+    AVLTree empty;
+    CHECK(!empty.remove(dk(1, 1)));
+    CHECK(empty.topN(5).empty() && empty.height() == 0);
+}
+
+TEST(avl_large_input_stays_balanced) {
+    AVLTree t;
+    for (int i = 0; i < 10000; ++i) t.insert(dk(i, i));   // sorted input: worst case for a plain BST
+    CHECK(t.size() == 10000);
+    CHECK(t.isValidAVL());
+    CHECK(t.height() <= 20);              // 1.44 * log2(10000) ~ 19
+    std::vector<DriverKey> top = t.topN(3);
+    CHECK(top.size() == 3 && top[0].ratingCenti == 9999 && top[2].ratingCenti == 9997);
+    for (int i = 0; i < 10000; i += 3) t.remove(dk(i, i));
+    CHECK(t.isValidAVL() && t.size() == 6666);
 }
