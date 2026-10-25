@@ -173,10 +173,97 @@ const MapView = {
     }
   },
 
+  // ------------------------------------------------------------ cars
+  // Each poll gives every driver's remaining legs with sim start/end times.
+  // frame() places the car by the extrapolated sim clock, so it glides at
+  // 60 fps between polls; a short exponential ease hides re-route snaps.
+  cars: new Map(),           // driver id -> { marker, el, data, lat, lng, heading }
+  lastFrame: 0,
+
+  carSvg(type) {
+    if (type === "BIKE") {
+      return `<svg viewBox="0 0 26 26"><rect class="body" x="10" y="4" width="6" height="18" rx="3"/><rect x="11" y="7" width="4" height="3" rx="1" fill="#0b1220"/><circle cx="13" cy="15" r="2" fill="#0b1220"/></svg>`;
+    }
+    const long = type === "AC";
+    const h = long ? 20 : 17, y = (26 - h) / 2;
+    return `<svg viewBox="0 0 26 26"><rect class="body" x="7.5" y="${y}" width="11" height="${h}" rx="3.5"/>
+      <rect x="9" y="${y + 3}" width="8" height="4" rx="1.2" fill="#0b1220" opacity="0.85"/>
+      <rect x="9" y="${y + h - 5}" width="8" height="2.6" rx="1" fill="#0b1220" opacity="0.6"/>
+      ${long ? `<rect x="12" y="${y + 8}" width="2" height="${h - 14}" fill="#0b1220" opacity="0.35"/>` : ""}</svg>`;
+  },
+
+  syncCars(drivers) {
+    const seen = new Set();
+    for (const d of drivers) {
+      seen.add(d.id);
+      let car = this.cars.get(d.id);
+      if (!car) {
+        const icon = L.divIcon({ className: "car-marker", html: `<div class="car"><span class="halo"></span>${this.carSvg(d.type)}</div>`, iconSize: [0, 0] });
+        const start = this.parkedSpot(d);
+        const marker = L.marker(start, { icon, zIndexOffset: 1000, keyboard: false }).addTo(this.layers.cars);
+        marker.bindTooltip("", { direction: "top", offset: [0, -12], className: "car-tip" });
+        car = { marker, el: marker.getElement().querySelector(".car"), lat: start[0], lng: start[1], heading: 0 };
+        this.cars.set(d.id, car);
+      }
+      car.data = d;
+      car.el.className = `car status-${d.status}${d.id === this.myDriverId ? " mine" : ""}`;
+      car.marker.setTooltipContent(`<b>${UI.escape(d.name)}</b> · ${d.type} · ★${d.rating.toFixed(2)}<br>${d.status.replace("_", " ")}`);
+      car.marker.setZIndexOffset(d.id === this.myDriverId ? 3000 : 1000);
+    }
+    for (const [id, car] of this.cars) {
+      if (!seen.has(id)) { car.marker.remove(); this.cars.delete(id); }
+    }
+  },
+
+  // parked cars fan out around the area dot so they do not overlap
+  parkedSpot(d) {
+    const c = this.latLng(d.areaId) || [24.88, 67.07];
+    const angle = (d.id * 137.5) * Math.PI / 180;
+    const r = 0.0016 + (d.id % 3) * 0.0006;
+    return [c[0] + Math.sin(angle) * r, c[1] + Math.cos(angle) * r * 1.1];
+  },
+
+  bearing(a, b) {
+    const dy = b[0] - a[0];
+    const dx = (b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180);
+    return Math.atan2(dx, dy) * 180 / Math.PI;   // 0 = north, clockwise
+  },
+
+  targetOf(d, now) {
+    if (!d.legs || !d.legs.length) return { pos: this.parkedSpot(d), heading: null };
+    let leg = d.legs[d.legs.length - 1];
+    for (const l of d.legs) { if (now < l.end) { leg = l; break; } }
+    const span = leg.end - leg.start;
+    const p = span > 0 ? Math.min(1, Math.max(0, (now - leg.start) / span)) : 1;
+    const a = this.latLng(leg.from), b = this.latLng(leg.to);
+    return { pos: [a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p], heading: this.bearing(a, b) };
+  },
+
+  frame(now) {
+    const t = performance.now();
+    const dt = this.lastFrame ? Math.min(0.1, (t - this.lastFrame) / 1000) : 0.016;
+    this.lastFrame = t;
+    const k = 1 - Math.exp(-dt / 0.09);
+    for (const car of this.cars.values()) {
+      if (!car.data) continue;
+      const target = this.targetOf(car.data, now);
+      const dLat = target.pos[0] - car.lat, dLng = target.pos[1] - car.lng;
+      if (Math.abs(dLat) + Math.abs(dLng) < 1e-7) continue;
+      const jump = Math.abs(dLat) + Math.abs(dLng) > 0.02;   // reset / teleport: no ease
+      car.lat = jump ? target.pos[0] : car.lat + dLat * k;
+      car.lng = jump ? target.pos[1] : car.lng + dLng * k;
+      if (target.heading !== null) {
+        const diff = ((target.heading - car.heading + 540) % 360) - 180;   // shortest turn
+        car.heading += diff * Math.min(1, k * 1.6);
+      }
+      car.marker.setLatLng([car.lat, car.lng]);
+      car.el.style.transform = `rotate(${car.heading.toFixed(1)}deg)`;
+    }
+  },
+
   // ------------------------------------------------------------ hooks
   onState(s) {
     this.syncRoads(s.roads || []);
+    this.syncCars(s.drivers || []);
   },
-
-  frame() { /* car animation added later */ },
 };

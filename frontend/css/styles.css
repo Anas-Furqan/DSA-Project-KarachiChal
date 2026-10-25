@@ -457,6 +457,10 @@ select option { background: var(--panel-solid); }
 .car .body { fill: #cbd5e1; }
 .car.status-TO_PICKUP .body { fill: var(--blue); }
 .car.status-ON_TRIP .body { fill: var(--accent); }
+.car .halo { display: none; }
+.car.mine .halo { display: block; }
+.car-tip { background: #0d1424; color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px; font-size: 12px; box-shadow: var(--shadow); }
+.car-tip::before { border-top-color: #0d1424 !important; }
 .car.mine .halo { position: absolute; inset: -8px; border-radius: 50%; border: 2px solid var(--accent-2); animation: halo 1.6s infinite; }
 @keyframes halo { from { transform: scale(0.6); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
 
