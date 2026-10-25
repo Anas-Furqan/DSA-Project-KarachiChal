@@ -196,6 +196,8 @@ svg { display: block; }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab-body, .itab-body { display: none; padding: 14px; overflow-y: auto; flex: 1; min-height: 0; }
 .tab-body.active, .itab-body.active { display: flex; flex-direction: column; gap: 12px; animation: fade-in 260ms var(--ease); }
+.tab-body > *, .itab-body > * { flex-shrink: 0; }
+.itab-body > .log, .itab-body > .viz { flex-shrink: 1; }
 @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* scrollbars */

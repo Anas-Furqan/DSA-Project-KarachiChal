@@ -135,6 +135,44 @@ const MapView = {
     }
   },
 
+  // ------------------------------------------------------------ routes
+  nodesToLatLngs(nodes) {
+    return (nodes || []).map((n) => this.latLng(n)).filter(Boolean);
+  },
+
+  // dotted preview of the Dijkstra route while booking
+  showPreview(nodes) {
+    if (this.previewLine) { this.previewLine.remove(); this.previewLine = null; }
+    if (!nodes || nodes.length < 2) return;
+    this.previewLine = L.polyline(this.nodesToLatLngs(nodes), { className: "route-line preview", interactive: false })
+      .addTo(this.layers.routes);
+    this.map.fitBounds(this.previewLine.getBounds().pad(0.35), { maxZoom: 13.5, animate: true, duration: 0.6 });
+  },
+
+  // driver -> pickup in blue, pickup -> drop in accent
+  showRide(ride, driver) {
+    this.myRide = ride;
+    this.myDriverId = ride ? ride.driverId : null;
+    const key = ride ? JSON.stringify([ride.status, ride.tripNodes, driver && driver.legs.map((l) => l.to)]) : "";
+    if (key === this.rideKey) return;   // nothing changed, keep the animated lines
+    this.rideKey = key;
+    if (this.rideLines) this.rideLines.forEach((l) => l.remove());
+    this.rideLines = [];
+    if (!ride) return;
+    if (ride.status !== "WAITING") this.showPreview(null);
+
+    const legNodes = driver && driver.legs.length ? [driver.legs[0].from, ...driver.legs.map((l) => l.to)] : null;
+    if (ride.status === "ASSIGNED" && legNodes) {
+      this.rideLines.push(L.polyline(this.nodesToLatLngs(legNodes), { className: "route-line to-pickup", interactive: false }).addTo(this.layers.routes));
+    }
+    if (ride.status === "ASSIGNED" || ride.status === "WAITING") {
+      this.rideLines.push(L.polyline(this.nodesToLatLngs(ride.tripNodes), { className: "route-line trip", interactive: false }).addTo(this.layers.routes));
+    }
+    if (ride.status === "IN_PROGRESS" && legNodes) {
+      this.rideLines.push(L.polyline(this.nodesToLatLngs(legNodes), { className: "route-line trip", interactive: false }).addTo(this.layers.routes));
+    }
+  },
+
   // ------------------------------------------------------------ hooks
   onState(s) {
     this.syncRoads(s.roads || []);
