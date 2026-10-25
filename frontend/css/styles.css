@@ -365,6 +365,7 @@ select option { background: var(--panel-solid); }
 .map-wrap { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); min-height: 0; }
 #map { position: absolute; inset: 0; background: #0a0f19; }
 .leaflet-container { font-family: var(--font); background: #0a0f19; }
+.tiles-dark { filter: invert(1) hue-rotate(195deg) brightness(0.78) contrast(0.92) saturate(0.32); }
 .leaflet-control-attribution { background: rgba(7, 11, 20, 0.7) !important; color: var(--muted) !important; }
 .leaflet-control-attribution a { color: var(--muted) !important; }
 .leaflet-bar a { background: var(--panel-solid) !important; color: var(--text) !important; border-color: var(--border) !important; }
