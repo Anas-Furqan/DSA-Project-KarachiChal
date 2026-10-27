@@ -1,11 +1,4 @@
-/*
- * api.js — every call to the C++ backend goes through API.request().
- *  - wraps fetch in try/catch, never throws raw network errors at callers
- *  - success: returns `data`, forwards `trace` to the DS inspector log
- *  - failure: throws ApiError with the server's message + code
- *  - network failure: shows the "Server not running" banner
- * Also holds small shared UI helpers (toasts, number tweening, escaping).
- */
+// api.js: every backend call goes through API.request(); also small shared UI helpers
 class ApiError extends Error {
   constructor(message, code, status) {
     super(message);
@@ -49,7 +42,6 @@ const API = {
   post(path, body) { return this.request("POST", path, body || {}); },
 };
 
-/* ------------------------------------------------------------- UI helpers */
 const UI = {
   escape(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

@@ -1,6 +1,4 @@
-/* =====================================================================
-   KarachiChal — dark glass theme. All colours live in :root tokens.
-   ===================================================================== */
+/* KarachiChal styles: dark theme, all colours are CSS variables */
 :root {
   --bg: #070b14;
   --bg-2: #0c1322;
@@ -58,7 +56,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 [hidden] { display: none !important; }
 svg { display: block; }
 
-/* ---------------------------------------------------------------- buttons */
+/* buttons */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: 36px; padding: 0 14px;
@@ -93,7 +91,7 @@ svg { display: block; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---------------------------------------------------------------- top bar */
+/* top bar */
 .topbar {
   height: var(--topbar-h);
   display: flex; align-items: center; gap: 22px;
@@ -163,7 +161,7 @@ svg { display: block; }
 .counter-label { font-size: 11px; color: var(--muted); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 
-/* ---------------------------------------------------------------- layout */
+/* layout */
 .layout {
   height: calc(100vh - var(--topbar-h));
   display: grid; grid-template-columns: 340px 1fr 390px;
@@ -174,7 +172,7 @@ svg { display: block; }
   backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2);
   border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow);
-  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden; overflow: clip;
 }
 .panel-title {
   display: flex; align-items: center; justify-content: space-between;
@@ -204,7 +202,7 @@ svg { display: block; }
 .tab-body::-webkit-scrollbar, .itab-body::-webkit-scrollbar, .log::-webkit-scrollbar, .dr-table-wrap::-webkit-scrollbar { width: 8px; }
 .tab-body::-webkit-scrollbar-thumb, .itab-body::-webkit-scrollbar-thumb, .log::-webkit-scrollbar-thumb, .dr-table-wrap::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 8px; }
 
-/* ---------------------------------------------------------------- DS chips */
+/* DS chips */
 .ds-chip {
   position: relative; display: inline-flex; align-items: center;
   padding: 3px 8px; border-radius: 999px;
@@ -233,7 +231,7 @@ svg { display: block; }
 .map-chips .ds-chip::after { top: calc(100% + 8px); }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* ---------------------------------------------------------------- forms */
+/* forms */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
@@ -291,7 +289,7 @@ select option { background: var(--panel-solid); }
 .rt-name { font-weight: 600; font-size: 13px; }
 .rt-fare { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 16px; }
 
-/* ---------------------------------------------------------------- ride card */
+/* ride card */
 .ride-card {
   border-radius: var(--radius); padding: 14px;
   background: linear-gradient(160deg, rgba(16, 185, 129, 0.08), rgba(255, 255, 255, 0.02));
@@ -352,7 +350,7 @@ select option { background: var(--panel-solid); }
 .stars.locked { pointer-events: none; }
 .ride-actions { display: flex; flex-direction: column; gap: 8px; }
 
-/* ---------------------------------------------------------------- history */
+/* history */
 .history-list { display: flex; flex-direction: column; gap: 8px; }
 .history-item {
   padding: 10px 12px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--border);
@@ -363,7 +361,7 @@ select option { background: var(--panel-solid); }
 .history-item .hi-fare { font: 700 14px var(--font-head); text-align: right; }
 .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px 8px; margin: 0; }
 
-/* ---------------------------------------------------------------- map */
+/* map */
 .map-wrap { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); min-height: 0; }
 #map { position: absolute; inset: 0; background: #0a0f19; }
 .leaflet-container { font-family: var(--font); background: #0a0f19; }
@@ -487,7 +485,7 @@ select option { background: var(--panel-solid); }
 .road-pop .rp-block { width: 100%; height: 32px; border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.45); background: var(--red-soft); color: #fecaca; font-weight: 600; }
 .road-pop .rp-block.unblock { border-color: rgba(16, 185, 129, 0.45); background: var(--accent-soft); color: var(--accent-2); }
 
-/* ---------------------------------------------------------------- inspector */
+/* inspector */
 .insp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .insp-stat { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .log-toolbar { display: flex; gap: 8px; }
@@ -570,7 +568,7 @@ select option { background: var(--panel-solid); }
 .rotation-log { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .rotation-log div { padding: 6px 9px; border-radius: 8px; background: rgba(244, 114, 182, 0.1); border: 1px solid rgba(244, 114, 182, 0.3); color: #fbcfe8; animation: fade-in 300ms var(--ease); }
 
-/* ---------------------------------------------------------------- drawer */
+/* drawer */
 .drawer {
   position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 1100;
   height: min(470px, 62vh); padding: 14px 16px 16px;
@@ -604,7 +602,7 @@ select option { background: var(--panel-solid); }
 .leaderboard td.rating { color: var(--amber); font-weight: 600; }
 .leaderboard tr.moved td { background: rgba(244, 114, 182, 0.08); }
 
-/* ---------------------------------------------------------------- dry-run sheet */
+/* dry-run sheet */
 .sheet {
   position: fixed; top: calc(var(--topbar-h) + 12px); right: 12px; bottom: 12px; z-index: 1050;
   width: 470px; padding: 16px; overflow-y: auto;
@@ -641,7 +639,7 @@ select option { background: var(--panel-solid); }
 .dr-heap div:first-child { border-color: var(--amber); color: #fde68a; }
 .dr-heap div b { font-family: var(--mono); font-weight: 500; }
 
-/* ---------------------------------------------------------------- toasts, banner */
+/* toasts, banner */
 .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; pointer-events: none; }
 .toast {
   pointer-events: auto; max-width: 360px; padding: 11px 14px; border-radius: 12px;
@@ -668,7 +666,7 @@ select option { background: var(--panel-solid); }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .dot.red { background: var(--red); box-shadow: 0 0 10px var(--red); }
 
-/* ---------------------------------------------------------------- skeletons */
+/* skeletons */
 .skeleton {
   display: block; border-radius: 6px;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.04) 100%);
@@ -678,7 +676,7 @@ select option { background: var(--panel-solid); }
 .sk-row { height: 46px; }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
-/* ---------------------------------------------------------------- responsive */
+/* responsive */
 @media (max-width: 1400px) {
   .layout { grid-template-columns: 310px 1fr 350px; }
   .brand-sub, .counter-label { display: none; }

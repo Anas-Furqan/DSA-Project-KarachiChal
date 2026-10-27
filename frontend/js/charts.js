@@ -1,7 +1,4 @@
-/*
- * charts.js — bottom analytics drawer: stat tiles, Chart.js charts and the
- * driver leaderboard (AVL in-order top 10). Refreshes every 3 s while open.
- */
+// charts.js: analytics drawer (stat tiles, Chart.js charts, AVL leaderboard)
 // Ride-type colours validated for the dark surface (dataviz palette check)
 const TYPE_COLORS = { BIKE: "#d97706", MINI: "#059669", AC: "#3b82f6" };
 const SERIES = "#10b981";

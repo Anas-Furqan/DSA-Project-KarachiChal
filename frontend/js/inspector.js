@@ -1,14 +1,4 @@
-/*
- * inspector.js — right panel "DS Inspector".
- *   Live Log : every `trace` entry the backend returns (DS, op, Big-O, detail)
- *   Heap     : event-scheduler min-heap drawn as a binary tree (array order)
- *   Queue    : waiting requests, front -> rear, cards slide in/out
- *   Hash     : buckets with their chains, load factor, rehash count
- *   Trie     : branch for the prefix typed in Pickup/Drop
- *   AVL      : leaderboard tree with balance factors; nodes are keyed by
- *              driver id so rotations animate as nodes slide to new spots
- * Structure tabs poll /api/ds/snapshot once a second while visible.
- */
+// inspector.js: DS Inspector panel (live trace log + heap, queue, hash, trie, AVL drawings)
 const SVG_NS = "http://www.w3.org/2000/svg";
 const LOG_LIMIT = 250;
 const DS_NAMES = ["MinHeap", "Graph", "Dijkstra", "BFS", "HashTable", "LinkedQueue", "LinkedList", "Trie", "AVLTree"];
@@ -69,7 +59,6 @@ const Inspector = {
     if (this.tab === "trie") this.refresh();
   },
 
-  // ------------------------------------------------------------ live log
   push(entries, truncated) {
     // a busy rush-hour tick can return 200 entries; keep the newest 60
     const batch = entries.length > 60 ? entries.slice(-60) : entries;
@@ -111,7 +100,6 @@ const Inspector = {
     this.log.querySelectorAll(".log-row").forEach((r) => (r.hidden = !!this.filter && !this.matches(r.dataset.ds)));
   },
 
-  // ------------------------------------------------------------ snapshots
   async refresh() {
     if (this.tab === "log" || this.loading) return;
     this.loading = true;
@@ -130,7 +118,6 @@ const Inspector = {
     }
   },
 
-  // ------------------------------------------------------------ heap
   renderHeap(heap, now) {
     const viz = document.getElementById("heapViz");
     const items = heap.items;
@@ -177,7 +164,6 @@ const Inspector = {
       (items.length > 40 ? `<span>… +${items.length - 40}</span>` : "");
   },
 
-  // ------------------------------------------------------------ queue
   renderQueue(queue) {
     const box = document.getElementById("queueViz");
     document.getElementById("queueStat").textContent = `${queue.size} waiting`;
@@ -212,7 +198,6 @@ const Inspector = {
       : "Queue is empty — every request found a driver. Turn on rush hour to fill it.";
   },
 
-  // ------------------------------------------------------------ hash table
   renderHash(h) {
     const stats = document.getElementById("hashStats");
     const rehashed = this.prev.rehash !== null && h.rehashCount !== this.prev.rehash;
@@ -233,7 +218,6 @@ const Inspector = {
     document.getElementById("hashViz").innerHTML = rows + more;
   },
 
-  // ------------------------------------------------------------ trie
   renderTrie(t) {
     const viz = document.getElementById("trieViz");
     document.getElementById("trieStat").textContent = `${t.words} words · ${t.nodeCount} nodes`;
@@ -290,7 +274,6 @@ const Inspector = {
       `"${t.prefix}" matched ${t.matched}/${t.prefix.length}${miss ? " — no completions" : ""} · ${t.words} words`;
   },
 
-  // ------------------------------------------------------------ AVL
   renderAVL(avl) {
     const viz = document.getElementById("avlViz");
     const nodes = avl.nodes;

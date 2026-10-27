@@ -1,10 +1,4 @@
-/*
- * app.js — bootstraps the page, owns the /api/state poll and the top bar.
- *
- * Polls /api/state every 500 ms. Between polls, App.simNow() extrapolates
- * the sim clock from real elapsed time so cars move at 60 fps without
- * waiting for the next poll.
- */
+// app.js: page startup, the /api/state poll (every 500 ms) and the top bar
 const POLL_MS = 500;
 
 const App = {
@@ -41,7 +35,6 @@ const App = {
     this.schedulePoll(0);
   },
 
-  // ------------------------------------------------------------ polling
   schedulePoll(delay = POLL_MS) {
     clearTimeout(this.pollTimer);
     this.pollTimer = setTimeout(() => this.poll(), delay);
@@ -86,7 +79,6 @@ const App = {
     requestAnimationFrame(() => this.frame());
   },
 
-  // ------------------------------------------------------------ server banner
   setServerUp(up) {
     if (up === this.serverUp) return;
     this.serverUp = up;
@@ -94,7 +86,6 @@ const App = {
     if (up) UI.toast("Reconnected", "Backend is reachable again", "info", 2500);
   },
 
-  // ------------------------------------------------------------ top bar
   wireTopBar() {
     document.getElementById("retryBtn").addEventListener("click", () => {
       if (!this.mapData) this.loadMap();

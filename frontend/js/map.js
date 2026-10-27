@@ -1,10 +1,4 @@
-/*
- * map.js — Leaflet only DRAWS. Every route shown here comes from the C++
- * Dijkstra over our adjacency-list Graph; no routing API is used.
- *
- * Layers: roads (+ wide invisible hit lines), area markers, surge circles,
- * cars, active-ride routes, route preview, dry-run highlights.
- */
+// map.js: Leaflet only draws; every route comes from the C++ Dijkstra
 const MapView = {
   map: null,
   areas: [],
@@ -47,7 +41,6 @@ const MapView = {
     return a ? [a.lat, a.lng] : null;
   },
 
-  // ------------------------------------------------------------ roads
   drawRoads() {
     for (const r of this.roads) {
       const pts = [this.latLng(r.from), this.latLng(r.to)];
@@ -155,7 +148,6 @@ const MapView = {
     }
   },
 
-  // ------------------------------------------------------------ areas
   drawAreas() {
     for (const a of this.areas) {
       const icon = L.divIcon({
@@ -184,7 +176,6 @@ const MapView = {
     }
   },
 
-  // ------------------------------------------------------------ routes
   nodesToLatLngs(nodes) {
     return (nodes || []).map((n) => this.latLng(n)).filter(Boolean);
   },
@@ -222,7 +213,6 @@ const MapView = {
     }
   },
 
-  // ------------------------------------------------------------ cars
   // Each poll gives every driver's remaining legs with sim start/end times.
   // frame() places the car by the extrapolated sim clock, so it glides at
   // 60 fps between polls; a short exponential ease hides re-route snaps.
@@ -310,7 +300,6 @@ const MapView = {
     }
   },
 
-  // ------------------------------------------------------------ surge
   // Areas whose BFS supply/demand ratio gives a multiplier > 1 pulse amber
   // (1.25x), orange (1.5x) or red (2x).
   surgeZones: new Map(),     // area id -> { circle, tag, mult }
@@ -338,7 +327,6 @@ const MapView = {
     }
   },
 
-  // ------------------------------------------------------------ dry run
   showDryRun(v) {
     const layer = this.layers.dryrun;
     layer.clearLayers();
@@ -368,7 +356,6 @@ const MapView = {
     this.map.getContainer().classList.remove("dryrun-active");
   },
 
-  // ------------------------------------------------------------ hooks
   onState(s) {
     this.syncRoads(s.roads || []);
     this.syncCars(s.drivers || []);

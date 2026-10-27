@@ -1,9 +1,5 @@
-/*
- * panels.js — left panel: Trie-backed autocomplete, booking form, live ride
- * card (status timeline, ETA, cancel, rating) and rider history.
- */
+// panels.js: booking form with Trie autocomplete, ride card and rider history
 
-/* ------------------------------------------------------------ Autocomplete */
 // One instance per search input. Calls /api/search (Trie) on every keystroke;
 // stale responses are dropped with a sequence number.
 class Autocomplete {
@@ -100,7 +96,6 @@ class Autocomplete {
   }
 }
 
-/* ----------------------------------------------------------------- Booking */
 const STATUS_ORDER = ["WAITING", "ASSIGNED", "IN_PROGRESS", "COMPLETED"];
 const TYPE_LABEL = { BIKE: "Bike", MINI: "Mini", AC: "AC Car" };
 
@@ -395,7 +390,6 @@ const Booking = {
   },
 };
 
-/* ------------------------------------------------------------- RideHistory */
 const RideHistory = {
   init() {
     this.input = document.getElementById("historyName");

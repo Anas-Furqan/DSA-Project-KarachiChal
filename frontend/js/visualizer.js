@@ -1,11 +1,4 @@
-/*
- * visualizer.js — "Dry Run Dijkstra" sheet. Loads the full step record from
- * /api/dryrun/dijkstra and replays it with Prev / Next / Play:
- *   map   : popped node (amber), settled (green), in heap (blue), relaxed edges
- *   table : distance table, changed rows highlighted
- *   heap  : heap contents after the step, sorted for reading
- * The last step draws the shortest path.
- */
+// visualizer.js: step-by-step Dijkstra dry run (Prev / Next / Play)
 const Visualizer = {
   data: null,
   i: 0,
