@@ -1,112 +1,75 @@
 #pragma once
 #include <string>
-#include <vector>
 
-/*
- * AVLTree — self-balancing binary search tree for the driver leaderboard.
- *
- * Key = (rating desc, driverId asc). The id tie-break makes every key unique
- * even when two drivers share a rating. Ratings are stored as integer
- * hundredths (4.73 -> 473) so comparisons never suffer float error.
- *
- * Why AVL? The leaderboard changes after every completed ride (delete old
- * key + insert new key) and is read in sorted order. A sorted array needs
- * O(n) shifting per update; a plain BST can degrade to a linked list (O(n));
- * AVL keeps height <= 1.44 log n via rotations, so insert/delete/search are
- * O(log n) and an in-order walk gives the top-N directly.
- *
- * Balance factor = height(left) - height(right), kept in [-1, 1].
- * The four imbalance cases are fixed by LL, RR, LR and RL rotations.
- */
+using namespace std;
 
-struct DriverKey {
-    int ratingCenti;   // rating * 100, higher = better
+const int MAX_LAST_ROTATIONS = 10;
+
+// Ordered by rating (high first), then driver id (low first), so keys are unique.
+// Ratings are kept as hundredths: 4.73 -> 473.
+struct AVLNode {
+    int rating;
     int driverId;
-
-    bool operator==(const DriverKey& o) const {
-        return ratingCenti == o.ratingCenti && driverId == o.driverId;
-    }
-    // "comes before" in leaderboard order: higher rating first, then lower id
-    bool before(const DriverKey& o) const {
-        if (ratingCenti != o.ratingCenti) return ratingCenti > o.ratingCenti;
-        return driverId < o.driverId;
-    }
+    int height;
+    AVLNode* left;
+    AVLNode* right;
 };
 
 struct AVLViewNode {
-    DriverKey key;
+    int rating;
+    int driverId;
     int height;
     int balance;
-    int left;    // index in the view array, -1 if none
+    int left;
     int right;
 };
 
 class AVLTree {
 public:
-    AVLTree() {}
+    AVLTree();
     ~AVLTree();
-    AVLTree(const AVLTree&) = delete;
-    AVLTree& operator=(const AVLTree&) = delete;
 
-    // O(log n). Returns false for a duplicate key (tree unchanged).
-    bool insert(const DriverKey& key);
-
-    // O(log n). Returns false if the key does not exist.
-    bool remove(const DriverKey& key);
-
-    // O(log n)
-    bool contains(const DriverKey& key) const;
-
-    // O(log n + N): first N keys of an in-order walk (best rating first).
-    std::vector<DriverKey> topN(int n) const;
-
-    // O(n)
-    std::vector<DriverKey> inOrder() const { return topN(size_); }
-
-    // O(1)
-    int size() const { return size_; }
-    // O(1)
-    int height() const { return heightOf(root_); }
-    // O(n)
+    bool insert(int rating, int driverId);
+    bool remove(int rating, int driverId);
+    bool contains(int rating, int driverId) const;
+    int topN(int ratings[], int driverIds[], int n) const;
+    int size() const;
+    int height() const;
     void clear();
 
-    // O(1): rotations done by the most recent insert/remove, e.g.
-    // "LL: right rotate at #12 (4.80)". Used by the inspector animation.
-    const std::vector<std::string>& lastRotations() const { return lastRotations_; }
-    // O(1): total rotations of one case since creation ("LL","RR","LR","RL").
-    int rotationCount(const std::string& kind) const;
+    void clearLastRotations();
+    int lastRotationCount() const;
+    string lastRotation(int i) const;
+    int rotationCount(string kind) const;
 
-    // O(n): pre-order export with heights and balance factors.
-    std::vector<AVLViewNode> view() const;
-
-    // O(n): test helper — checks BST order, stored heights and |balance| <= 1.
+    int view(AVLViewNode out[], int maxNodes) const;
     bool isValidAVL() const;
 
 private:
-    struct Node {
-        DriverKey key;
-        int height;
-        Node* left;
-        Node* right;
-    };
+    AVLNode* root;
+    int count;
+    string lastRotations[MAX_LAST_ROTATIONS];
+    int numLastRotations;
+    int countLL;
+    int countRR;
+    int countLR;
+    int countRL;
 
-    Node* root_ = nullptr;
-    int size_ = 0;
-    std::vector<std::string> lastRotations_;
-    int countLL_ = 0, countRR_ = 0, countLR_ = 0, countRL_ = 0;
+    bool comesBefore(int rating1, int id1, int rating2, int id2) const;
+    int heightOf(AVLNode* node) const;
+    int balanceOf(AVLNode* node) const;
+    void updateHeight(AVLNode* node);
+    void destroy(AVLNode* node);
+    void recordRotation(string text);
+    string describe(AVLNode* node) const;
 
-    static int heightOf(const Node* n) { return n ? n->height : 0; }
-    static int balanceOf(const Node* n) { return n ? heightOf(n->left) - heightOf(n->right) : 0; }
-    static void updateHeight(Node* n);
-    static void destroy(Node* n);
-    static std::string describe(const DriverKey& k);
-
-    Node* rotateRight(Node* y);
-    Node* rotateLeft(Node* x);
-    Node* rebalance(Node* n);
-    Node* insertAt(Node* n, const DriverKey& key, bool& inserted);
-    Node* removeAt(Node* n, const DriverKey& key, bool& removed);
-    void collectTop(const Node* n, int limit, std::vector<DriverKey>& out) const;
-    int exportNode(const Node* n, std::vector<AVLViewNode>& out) const;
-    bool validate(const Node* n, const DriverKey* lo, const DriverKey* hi, int& h) const;
+    AVLNode* rotateRight(AVLNode* y);
+    AVLNode* rotateLeft(AVLNode* x);
+    AVLNode* rebalance(AVLNode* node);
+    AVLNode* insertAt(AVLNode* node, int rating, int driverId, bool& inserted);
+    AVLNode* removeAt(AVLNode* node, int rating, int driverId, bool& removed);
+    void collectTop(AVLNode* node, int ratings[], int driverIds[], int& found, int n) const;
+    int exportNode(AVLNode* node, AVLViewNode out[], int& count, int maxNodes) const;
+    bool validate(AVLNode* node, int& h) const;
+    bool inOrderCheck(AVLNode* node, int& lastRating, int& lastId, bool& first) const;
 };

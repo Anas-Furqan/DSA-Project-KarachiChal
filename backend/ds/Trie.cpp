@@ -1,16 +1,35 @@
 #include "ds/Trie.h"
 
-Trie::Node::Node() : isEnd(false), value(-1) {
-    for (int i = 0; i < kAlphabet; ++i) child[i] = nullptr;
+using namespace std;
+
+Trie::Trie() {
+    words = 0;
+    nodes = 0;
+    root = newNode();
 }
 
-Trie::Trie() : root_(new Node()) {}
+Trie::~Trie() {
+    destroy(root);
+}
 
-Trie::~Trie() { destroy(root_); }
+TrieNode* Trie::newNode() {
+    TrieNode* node = new TrieNode;
+    for (int i = 0; i < TRIE_ALPHABET; i++) node->child[i] = NULL;
+    node->isEnd = false;
+    node->value = -1;
+    nodes++;
+    return node;
+}
 
-// O(1): map a character to a child slot, case-insensitive. -1 = unsupported.
-int Trie::indexOf(char c) {
-    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+void Trie::destroy(TrieNode* node) {
+    if (node == NULL) return;
+    for (int i = 0; i < TRIE_ALPHABET; i++) destroy(node->child[i]);
+    delete node;
+}
+
+// a-z, 0-9, space, '-', '.', '\''  (case-insensitive)
+int Trie::indexOf(char c) const {
+    if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
     if (c >= 'a' && c <= 'z') return c - 'a';
     if (c >= '0' && c <= '9') return 26 + (c - '0');
     if (c == ' ') return 36;
@@ -20,130 +39,157 @@ int Trie::indexOf(char c) {
     return -1;
 }
 
-char Trie::charAt(int index) {
-    if (index < 26) return (char)('a' + index);
-    if (index < 36) return (char)('0' + index - 26);
-    const char extra[] = {' ', '-', '.', '\''};
-    return extra[index - 36];
+char Trie::charAt(int index) const {
+    if (index < 26) return 'a' + index;
+    if (index < 36) return '0' + (index - 26);
+    if (index == 36) return ' ';
+    if (index == 37) return '-';
+    if (index == 38) return '.';
+    return '\'';
 }
 
-void Trie::destroy(Node* n) {
-    if (!n) return;
-    for (int i = 0; i < kAlphabet; ++i) destroy(n->child[i]);
-    delete n;
-}
-
-void Trie::clear() {
-    destroy(root_);
-    root_ = new Node();
-    wordCount_ = 0;
-    nodeCount_ = 1;
-}
-
-bool Trie::insert(const std::string& word, int value, const std::string& displayName) {
+bool Trie::insert(string word, int value, string displayName) {
     if (word.empty()) return false;
-    for (char c : word)
-        if (indexOf(c) == -1) return false;   // validate before touching the tree
-
-    Node* cur = root_;
-    for (char c : word) {
-        int i = indexOf(c);
-        if (!cur->child[i]) {
-            cur->child[i] = new Node();
-            ++nodeCount_;
-        }
-        cur = cur->child[i];
+    for (int i = 0; i < (int)word.size(); i++) {
+        if (indexOf(word[i]) == -1) return false;
     }
-    if (!cur->isEnd) ++wordCount_;
+    TrieNode* cur = root;
+    for (int i = 0; i < (int)word.size(); i++) {
+        int c = indexOf(word[i]);
+        if (cur->child[c] == NULL) cur->child[c] = newNode();
+        cur = cur->child[c];
+    }
+    if (!cur->isEnd) words++;
     cur->isEnd = true;
     cur->value = value;
     cur->word = displayName.empty() ? word : displayName;
     return true;
 }
 
-const Trie::Node* Trie::walk(const std::string& prefix) const {
-    const Node* cur = root_;
-    for (char c : prefix) {
-        int i = indexOf(c);
-        if (i == -1 || !cur->child[i]) return nullptr;
-        cur = cur->child[i];
+TrieNode* Trie::walk(string prefix) const {
+    TrieNode* cur = root;
+    for (int i = 0; i < (int)prefix.size(); i++) {
+        int c = indexOf(prefix[i]);
+        if (c == -1 || cur->child[c] == NULL) return NULL;
+        cur = cur->child[c];
     }
     return cur;
 }
 
-bool Trie::contains(const std::string& word) const {
+bool Trie::contains(string word) const {
     if (word.empty()) return false;
-    const Node* n = walk(word);
-    return n && n->isEnd;
+    TrieNode* node = walk(word);
+    return node != NULL && node->isEnd;
 }
 
-// Pre-order DFS in alphabet order; stops once `limit` distinct values found.
-void Trie::collect(const Node* n, int limit, std::vector<TrieMatch>& out) const {
-    if ((int)out.size() >= limit) return;
-    if (n->isEnd) {
+// DFS in alphabet order, skips words that point to an area already found
+void Trie::collect(TrieNode* node, TrieMatch results[], int& found, int limit) const {
+    if (found >= limit) return;
+    if (node->isEnd) {
         bool duplicate = false;
-        for (const TrieMatch& m : out)
-            if (m.value == n->value) duplicate = true;
-        if (!duplicate) out.push_back(TrieMatch{n->word, n->value});
+        for (int i = 0; i < found; i++) {
+            if (results[i].value == node->value) duplicate = true;
+        }
+        if (!duplicate) {
+            results[found].word = node->word;
+            results[found].value = node->value;
+            found++;
+        }
     }
-    for (int i = 0; i < kAlphabet && (int)out.size() < limit; ++i)
-        if (n->child[i]) collect(n->child[i], limit, out);
+    for (int i = 0; i < TRIE_ALPHABET && found < limit; i++) {
+        if (node->child[i] != NULL) collect(node->child[i], results, found, limit);
+    }
 }
 
-std::vector<TrieMatch> Trie::startsWith(const std::string& prefix, int limit) const {
-    std::vector<TrieMatch> out;
-    if (prefix.empty() || limit <= 0) return out;
-    const Node* start = walk(prefix);
-    if (start) collect(start, limit, out);
-    return out;
+int Trie::startsWith(string prefix, TrieMatch results[], int limit) const {
+    if (prefix.empty() || limit <= 0) return 0;
+    TrieNode* start = walk(prefix);
+    if (start == NULL) return 0;
+    int found = 0;
+    collect(start, results, found, limit);
+    return found;
 }
 
-int Trie::matchedLength(const std::string& prefix) const {
-    const Node* cur = root_;
+int Trie::matchedLength(string prefix) const {
+    TrieNode* cur = root;
     int matched = 0;
-    for (char c : prefix) {
-        int i = indexOf(c);
-        if (i == -1 || !cur->child[i]) break;
-        cur = cur->child[i];
-        ++matched;
+    for (int i = 0; i < (int)prefix.size(); i++) {
+        int c = indexOf(prefix[i]);
+        if (c == -1 || cur->child[c] == NULL) break;
+        cur = cur->child[c];
+        matched++;
     }
     return matched;
 }
 
-void Trie::addSubtree(const Node* n, int parentIdx, int depth, int maxNodes,
-                      std::vector<TrieViewNode>& out) const {
-    for (int i = 0; i < kAlphabet; ++i) {
-        if (!n->child[i]) continue;
-        if ((int)out.size() >= maxNodes) return;
-        const Node* c = n->child[i];
-        out.push_back(TrieViewNode{charAt(i), parentIdx, depth, c->isEnd, false, c->isEnd ? c->word : ""});
-        addSubtree(c, (int)out.size() - 1, depth + 1, maxNodes, out);
+void Trie::addSubtree(TrieNode* node, int parentIndex, int depth, TrieViewNode out[], int& count, int maxNodes) const {
+    for (int i = 0; i < TRIE_ALPHABET; i++) {
+        TrieNode* c = node->child[i];
+        if (c == NULL) continue;
+        if (count >= maxNodes) return;
+        out[count].ch = charAt(i);
+        out[count].parent = parentIndex;
+        out[count].depth = depth;
+        out[count].isEnd = c->isEnd;
+        out[count].onPath = false;
+        out[count].word = c->isEnd ? c->word : "";
+        count++;
+        addSubtree(c, count - 1, depth + 1, out, count, maxNodes);
     }
 }
 
-std::vector<TrieViewNode> Trie::branchView(const std::string& prefix, int maxNodes) const {
-    std::vector<TrieViewNode> out;
-    out.push_back(TrieViewNode{'\0', -1, 0, false, true, ""});
-    int matched = matchedLength(prefix);
+// root, the typed path with its siblings, then the words below the prefix
+int Trie::branchView(string prefix, TrieViewNode out[], int maxNodes) const {
+    if (maxNodes <= 0) return 0;
+    int count = 0;
+    out[0].ch = '\0';
+    out[0].parent = -1;
+    out[0].depth = 0;
+    out[0].isEnd = false;
+    out[0].onPath = true;
+    out[0].word = "";
+    count = 1;
 
-    // 1) the matched path, plus every sibling one level off the path
-    const Node* cur = root_;
-    int curIdx = 0;
-    for (int d = 0; d < matched; ++d) {
+    int matched = matchedLength(prefix);
+    TrieNode* cur = root;
+    int curIndex = 0;
+    for (int d = 0; d < matched; d++) {
         int pathChild = indexOf(prefix[d]);
-        int nextIdx = -1;
-        for (int i = 0; i < kAlphabet; ++i) {
-            const Node* c = cur->child[i];
-            if (!c) continue;
+        int nextIndex = -1;
+        for (int i = 0; i < TRIE_ALPHABET; i++) {
+            TrieNode* c = cur->child[i];
+            if (c == NULL) continue;
             bool onPath = (i == pathChild);
-            if (!onPath && (int)out.size() >= maxNodes) continue;
-            out.push_back(TrieViewNode{charAt(i), curIdx, d + 1, c->isEnd, onPath, c->isEnd ? c->word : ""});
-            if (onPath) nextIdx = (int)out.size() - 1;
+            if (!onPath && count >= maxNodes - (matched - d)) continue;
+            out[count].ch = charAt(i);
+            out[count].parent = curIndex;
+            out[count].depth = d + 1;
+            out[count].isEnd = c->isEnd;
+            out[count].onPath = onPath;
+            out[count].word = c->isEnd ? c->word : "";
+            if (onPath) nextIndex = count;
+            count++;
         }
         cur = cur->child[pathChild];
-        curIdx = nextIdx;
+        curIndex = nextIndex;
     }
-    // 2) the subtree under the prefix node (all completions), capped
-    if (matched > 0 && matched == (int)prefix.size()) addSubtree(cur, curIdx, matched + 1, maxNodes, out);
-    return out;
+    if (matched > 0 && matched == (int)prefix.size()) {
+        addSubtree(cur, curIndex, matched + 1, out, count, maxNodes);
+    }
+    return count;
+}
+
+int Trie::wordCount() const {
+    return words;
+}
+
+int Trie::nodeCount() const {
+    return nodes;
+}
+
+void Trie::clear() {
+    destroy(root);
+    words = 0;
+    nodes = 0;
+    root = newNode();
 }

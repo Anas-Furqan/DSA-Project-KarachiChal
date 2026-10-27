@@ -1,206 +1,293 @@
 #include "ds/AVLTree.h"
-
 #include <cstdio>
 
-AVLTree::~AVLTree() { destroy(root_); }
+using namespace std;
 
-void AVLTree::destroy(Node* n) {
-    if (!n) return;
-    destroy(n->left);
-    destroy(n->right);
-    delete n;
+AVLTree::AVLTree() {
+    root = NULL;
+    count = 0;
+    numLastRotations = 0;
+    countLL = 0;
+    countRR = 0;
+    countLR = 0;
+    countRL = 0;
 }
 
-void AVLTree::clear() {
-    destroy(root_);
-    root_ = nullptr;
-    size_ = 0;
-    lastRotations_.clear();
+AVLTree::~AVLTree() {
+    destroy(root);
 }
 
-void AVLTree::updateHeight(Node* n) {
-    int hl = heightOf(n->left), hr = heightOf(n->right);
-    n->height = 1 + (hl > hr ? hl : hr);
+void AVLTree::destroy(AVLNode* node) {
+    if (node == NULL) return;
+    destroy(node->left);
+    destroy(node->right);
+    delete node;
 }
 
-std::string AVLTree::describe(const DriverKey& k) {
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), "#%d (%.2f)", k.driverId, k.ratingCenti / 100.0);
+bool AVLTree::comesBefore(int rating1, int id1, int rating2, int id2) const {
+    if (rating1 != rating2) return rating1 > rating2;
+    return id1 < id2;
+}
+
+int AVLTree::heightOf(AVLNode* node) const {
+    if (node == NULL) return 0;
+    return node->height;
+}
+
+int AVLTree::balanceOf(AVLNode* node) const {
+    if (node == NULL) return 0;
+    return heightOf(node->left) - heightOf(node->right);
+}
+
+void AVLTree::updateHeight(AVLNode* node) {
+    int hl = heightOf(node->left);
+    int hr = heightOf(node->right);
+    node->height = 1 + (hl > hr ? hl : hr);
+}
+
+string AVLTree::describe(AVLNode* node) const {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "#%d (%.2f)", node->driverId, node->rating / 100.0);
     return buf;
 }
 
-int AVLTree::rotationCount(const std::string& kind) const {
-    if (kind == "LL") return countLL_;
-    if (kind == "RR") return countRR_;
-    if (kind == "LR") return countLR_;
-    if (kind == "RL") return countRL_;
-    return 0;
+void AVLTree::recordRotation(string text) {
+    if (numLastRotations < MAX_LAST_ROTATIONS) {
+        lastRotations[numLastRotations] = text;
+        numLastRotations++;
+    }
 }
 
-/* O(1)
- *       y            x
- *      / \          / \
- *     x   C  -->   A   y
- *    / \              / \
- *   A   B            B   C
- */
-AVLTree::Node* AVLTree::rotateRight(Node* y) {
-    Node* x = y->left;
-    y->left = x->right;
+AVLNode* AVLTree::rotateRight(AVLNode* y) {
+    AVLNode* x = y->left;
+    AVLNode* t2 = x->right;
     x->right = y;
+    y->left = t2;
     updateHeight(y);
     updateHeight(x);
     return x;
 }
 
-// O(1): mirror of rotateRight.
-AVLTree::Node* AVLTree::rotateLeft(Node* x) {
-    Node* y = x->right;
-    x->right = y->left;
+AVLNode* AVLTree::rotateLeft(AVLNode* x) {
+    AVLNode* y = x->right;
+    AVLNode* t2 = y->left;
     y->left = x;
+    x->right = t2;
     updateHeight(x);
     updateHeight(y);
     return y;
 }
 
-// O(1): restore |balance| <= 1 at n using one of the four rotation cases.
-AVLTree::Node* AVLTree::rebalance(Node* n) {
-    updateHeight(n);
-    int bf = balanceOf(n);
-    if (bf > 1) {
-        if (balanceOf(n->left) >= 0) {
-            lastRotations_.push_back("LL: right rotate at " + describe(n->key));
-            ++countLL_;
-        } else {
-            lastRotations_.push_back("LR: left rotate at " + describe(n->left->key) +
-                                     ", right rotate at " + describe(n->key));
-            ++countLR_;
-            n->left = rotateLeft(n->left);
+AVLNode* AVLTree::rebalance(AVLNode* node) {
+    updateHeight(node);
+    int balance = balanceOf(node);
+
+    if (balance > 1) {
+        if (balanceOf(node->left) >= 0) {
+            countLL++;
+            recordRotation("LL: right rotate at " + describe(node));
+            return rotateRight(node);
         }
-        return rotateRight(n);
+        countLR++;
+        recordRotation("LR: left rotate at " + describe(node->left) + ", right rotate at " + describe(node));
+        node->left = rotateLeft(node->left);
+        return rotateRight(node);
     }
-    if (bf < -1) {
-        if (balanceOf(n->right) <= 0) {
-            lastRotations_.push_back("RR: left rotate at " + describe(n->key));
-            ++countRR_;
-        } else {
-            lastRotations_.push_back("RL: right rotate at " + describe(n->right->key) +
-                                     ", left rotate at " + describe(n->key));
-            ++countRL_;
-            n->right = rotateRight(n->right);
+    if (balance < -1) {
+        if (balanceOf(node->right) <= 0) {
+            countRR++;
+            recordRotation("RR: left rotate at " + describe(node));
+            return rotateLeft(node);
         }
-        return rotateLeft(n);
+        countRL++;
+        recordRotation("RL: right rotate at " + describe(node->right) + ", left rotate at " + describe(node));
+        node->right = rotateRight(node->right);
+        return rotateLeft(node);
     }
-    return n;
+    return node;
 }
 
-AVLTree::Node* AVLTree::insertAt(Node* n, const DriverKey& key, bool& inserted) {
-    if (!n) {
+AVLNode* AVLTree::insertAt(AVLNode* node, int rating, int driverId, bool& inserted) {
+    if (node == NULL) {
+        AVLNode* fresh = new AVLNode;
+        fresh->rating = rating;
+        fresh->driverId = driverId;
+        fresh->height = 1;
+        fresh->left = NULL;
+        fresh->right = NULL;
         inserted = true;
-        return new Node{key, 1, nullptr, nullptr};
+        return fresh;
     }
-    if (key == n->key) return n;   // duplicate: unchanged
-    if (key.before(n->key)) n->left = insertAt(n->left, key, inserted);
-    else n->right = insertAt(n->right, key, inserted);
-    return rebalance(n);
+    if (rating == node->rating && driverId == node->driverId) {
+        inserted = false;
+        return node;
+    }
+    if (comesBefore(rating, driverId, node->rating, node->driverId)) {
+        node->left = insertAt(node->left, rating, driverId, inserted);
+    } else {
+        node->right = insertAt(node->right, rating, driverId, inserted);
+    }
+    if (!inserted) return node;
+    return rebalance(node);
 }
 
-bool AVLTree::insert(const DriverKey& key) {
-    lastRotations_.clear();
+bool AVLTree::insert(int rating, int driverId) {
     bool inserted = false;
-    root_ = insertAt(root_, key, inserted);
-    if (inserted) ++size_;
+    root = insertAt(root, rating, driverId, inserted);
+    if (inserted) count++;
     return inserted;
 }
 
-AVLTree::Node* AVLTree::removeAt(Node* n, const DriverKey& key, bool& removed) {
-    if (!n) return nullptr;
-    if (key == n->key) {
+AVLNode* AVLTree::removeAt(AVLNode* node, int rating, int driverId, bool& removed) {
+    if (node == NULL) {
+        removed = false;
+        return NULL;
+    }
+    if (rating == node->rating && driverId == node->driverId) {
         removed = true;
-        if (!n->left || !n->right) {
-            Node* child = n->left ? n->left : n->right;
-            delete n;
+        if (node->left == NULL || node->right == NULL) {
+            AVLNode* child = node->left != NULL ? node->left : node->right;
+            delete node;
             return child;
         }
-        // two children: copy in-order successor, then delete it from the right
-        Node* succ = n->right;
-        while (succ->left) succ = succ->left;
-        n->key = succ->key;
+        // two children: copy the in-order successor, then delete it from the right side
+        AVLNode* next = node->right;
+        while (next->left != NULL) next = next->left;
+        node->rating = next->rating;
+        node->driverId = next->driverId;
         bool dummy = false;
-        n->right = removeAt(n->right, succ->key, dummy);
-    } else if (key.before(n->key)) {
-        n->left = removeAt(n->left, key, removed);
+        node->right = removeAt(node->right, next->rating, next->driverId, dummy);
+    } else if (comesBefore(rating, driverId, node->rating, node->driverId)) {
+        node->left = removeAt(node->left, rating, driverId, removed);
     } else {
-        n->right = removeAt(n->right, key, removed);
+        node->right = removeAt(node->right, rating, driverId, removed);
     }
-    return rebalance(n);
+    if (!removed) return node;
+    return rebalance(node);
 }
 
-bool AVLTree::remove(const DriverKey& key) {
-    lastRotations_.clear();
+bool AVLTree::remove(int rating, int driverId) {
     bool removed = false;
-    root_ = removeAt(root_, key, removed);
-    if (removed) --size_;
+    root = removeAt(root, rating, driverId, removed);
+    if (removed) count--;
     return removed;
 }
 
-bool AVLTree::contains(const DriverKey& key) const {
-    const Node* cur = root_;
-    while (cur) {
-        if (key == cur->key) return true;
-        cur = key.before(cur->key) ? cur->left : cur->right;
+bool AVLTree::contains(int rating, int driverId) const {
+    AVLNode* cur = root;
+    while (cur != NULL) {
+        if (cur->rating == rating && cur->driverId == driverId) return true;
+        if (comesBefore(rating, driverId, cur->rating, cur->driverId)) {
+            cur = cur->left;
+        } else {
+            cur = cur->right;
+        }
     }
     return false;
 }
 
-// In-order walk that stops as soon as `limit` keys are collected.
-void AVLTree::collectTop(const Node* n, int limit, std::vector<DriverKey>& out) const {
-    if (!n || (int)out.size() >= limit) return;
-    collectTop(n->left, limit, out);
-    if ((int)out.size() >= limit) return;
-    out.push_back(n->key);
-    collectTop(n->right, limit, out);
+void AVLTree::collectTop(AVLNode* node, int ratings[], int driverIds[], int& found, int n) const {
+    if (node == NULL || found >= n) return;
+    collectTop(node->left, ratings, driverIds, found, n);
+    if (found < n) {
+        ratings[found] = node->rating;
+        driverIds[found] = node->driverId;
+        found++;
+    }
+    collectTop(node->right, ratings, driverIds, found, n);
 }
 
-std::vector<DriverKey> AVLTree::topN(int n) const {
-    std::vector<DriverKey> out;
-    if (n > 0) collectTop(root_, n, out);
-    return out;
+int AVLTree::topN(int ratings[], int driverIds[], int n) const {
+    int found = 0;
+    collectTop(root, ratings, driverIds, found, n);
+    return found;
 }
 
-int AVLTree::exportNode(const Node* n, std::vector<AVLViewNode>& out) const {
-    if (!n) return -1;
-    int idx = (int)out.size();
-    out.push_back(AVLViewNode{n->key, n->height, balanceOf(n), -1, -1});
-    int l = exportNode(n->left, out);
-    int r = exportNode(n->right, out);
-    out[idx].left = l;
-    out[idx].right = r;
-    return idx;
+int AVLTree::size() const {
+    return count;
 }
 
-std::vector<AVLViewNode> AVLTree::view() const {
-    std::vector<AVLViewNode> out;
-    exportNode(root_, out);
-    return out;
+int AVLTree::height() const {
+    return heightOf(root);
 }
 
-bool AVLTree::validate(const Node* n, const DriverKey* lo, const DriverKey* hi, int& h) const {
-    if (!n) {
+void AVLTree::clear() {
+    destroy(root);
+    root = NULL;
+    count = 0;
+    numLastRotations = 0;
+}
+
+void AVLTree::clearLastRotations() {
+    numLastRotations = 0;
+}
+
+int AVLTree::lastRotationCount() const {
+    return numLastRotations;
+}
+
+string AVLTree::lastRotation(int i) const {
+    if (i < 0 || i >= numLastRotations) return "";
+    return lastRotations[i];
+}
+
+int AVLTree::rotationCount(string kind) const {
+    if (kind == "LL") return countLL;
+    if (kind == "RR") return countRR;
+    if (kind == "LR") return countLR;
+    if (kind == "RL") return countRL;
+    return 0;
+}
+
+// pre-order, so out[0] is the root
+int AVLTree::exportNode(AVLNode* node, AVLViewNode out[], int& count, int maxNodes) const {
+    if (node == NULL || count >= maxNodes) return -1;
+    int index = count;
+    out[index].rating = node->rating;
+    out[index].driverId = node->driverId;
+    out[index].height = node->height;
+    out[index].balance = balanceOf(node);
+    count++;
+    out[index].left = exportNode(node->left, out, count, maxNodes);
+    out[index].right = exportNode(node->right, out, count, maxNodes);
+    return index;
+}
+
+int AVLTree::view(AVLViewNode out[], int maxNodes) const {
+    int count = 0;
+    exportNode(root, out, count, maxNodes);
+    return count;
+}
+
+bool AVLTree::validate(AVLNode* node, int& h) const {
+    if (node == NULL) {
         h = 0;
         return true;
     }
-    if (lo && !lo->before(n->key)) return false;
-    if (hi && !n->key.before(*hi)) return false;
-    int hl = 0, hr = 0;
-    if (!validate(n->left, lo, &n->key, hl)) return false;
-    if (!validate(n->right, &n->key, hi, hr)) return false;
+    int hl = 0;
+    int hr = 0;
+    if (!validate(node->left, hl)) return false;
+    if (!validate(node->right, hr)) return false;
     h = 1 + (hl > hr ? hl : hr);
-    int bf = hl - hr;
-    return h == n->height && bf >= -1 && bf <= 1;
+    int balance = hl - hr;
+    return h == node->height && balance >= -1 && balance <= 1;
+}
+
+bool AVLTree::inOrderCheck(AVLNode* node, int& lastRating, int& lastId, bool& first) const {
+    if (node == NULL) return true;
+    if (!inOrderCheck(node->left, lastRating, lastId, first)) return false;
+    if (!first && !comesBefore(lastRating, lastId, node->rating, node->driverId)) return false;
+    first = false;
+    lastRating = node->rating;
+    lastId = node->driverId;
+    return inOrderCheck(node->right, lastRating, lastId, first);
 }
 
 bool AVLTree::isValidAVL() const {
     int h = 0;
-    return validate(root_, nullptr, nullptr, h);
+    if (!validate(root, h)) return false;
+    int lastRating = 0;
+    int lastId = 0;
+    bool first = true;
+    return inOrderCheck(root, lastRating, lastId, first);
 }
