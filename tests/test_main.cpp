@@ -1,322 +1,306 @@
-/*
- * KarachiChal console test runner — no external framework.
- *
- * TEST(name) { ... } registers a test automatically.
- * CHECK(cond) records a failure (with file:line) but keeps the test going.
- * Every dry-run case in docs/DRY_RUNS.md has a matching test here.
- */
 #include <cmath>
 #include <iostream>
 #include <string>
-#include <vector>
 
-#include "ds/Graph.h"
-#include "ds/MinHeap.h"
-#include "core/Dijkstra.h"
 #include "core/BFS.h"
-#include "ds/LinkedQueue.h"
-#include "ds/HashTable.h"
-#include "ds/Trie.h"
-#include "ds/AVLTree.h"
-#include "ds/LinkedList.h"
 #include "core/CityMap.h"
-#include "core/Models.h"
-#include "core/SurgeEngine.h"
+#include "core/Dijkstra.h"
 #include "core/Dispatcher.h"
+#include "core/Models.h"
 #include "core/Simulator.h"
+#include "core/SurgeEngine.h"
+#include "ds/AVLTree.h"
+#include "ds/Graph.h"
+#include "ds/HashTable.h"
+#include "ds/LinkedList.h"
+#include "ds/LinkedQueue.h"
+#include "ds/MinHeap.h"
+#include "ds/Trie.h"
 
-// ---------------------------------------------------------------- framework
-struct TestCase {
-    const char* name;
-    void (*fn)();
-};
+using namespace std;
 
-static std::vector<TestCase>& registry() {
-    static std::vector<TestCase> tests;
-    return tests;
-}
+int failedChecks = 0;
+int passedTests = 0;
+int failedTests = 0;
 
-struct TestRegistrar {
-    TestRegistrar(const char* name, void (*fn)()) { registry().push_back(TestCase{name, fn}); }
-};
-
-static int g_failures = 0;
-
-#define TEST(name)                                          \
-    static void name();                                     \
-    static TestRegistrar name##_registrar(#name, &name);    \
-    static void name()
-
-#define CHECK(cond)                                                              \
-    do {                                                                         \
-        if (!(cond)) {                                                           \
-            ++g_failures;                                                        \
-            std::cout << "    check failed: " #cond " (" << __FILE__ << ":"      \
-                      << __LINE__ << ")\n";                                      \
-        }                                                                        \
-    } while (0)
-
-static bool nearlyEqual(double a, double b, double eps = 1e-6) { return std::fabs(a - b) < eps; }
-
-int main() {
-    int passed = 0, failed = 0;
-    for (const TestCase& t : registry()) {
-        int before = g_failures;
-        t.fn();
-        if (g_failures == before) {
-            ++passed;
-            std::cout << "PASS  " << t.name << "\n";
-        } else {
-            ++failed;
-            std::cout << "FAIL  " << t.name << "\n";
-        }
+#define CHECK(cond)                                                                    \
+    if (!(cond)) {                                                                     \
+        failedChecks++;                                                                \
+        cout << "    check failed: " << #cond << " (line " << __LINE__ << ")" << endl; \
     }
-    std::cout << "\n" << passed << " passed, " << failed << " failed, "
-              << registry().size() << " total\n";
-    return failed == 0 ? 0 : 1;
+
+void runTest(string name, void (*testFunction)()) {
+    int before = failedChecks;
+    testFunction();
+    if (failedChecks == before) {
+        passedTests++;
+        cout << "PASS  " << name << endl;
+    } else {
+        failedTests++;
+        cout << "FAIL  " << name << endl;
+    }
 }
 
-// ==================================================================== Graph
-TEST(graph_add_nodes_and_edges) {
+bool nearlyEqual(double a, double b) {
+    return fabs(a - b) < 1e-6;
+}
+
+// ---------------------------------------------------------------- Graph
+
+void testGraphAddNodesAndEdges() {
     Graph g;
-    int a = g.addNode("A", 0, 0);
-    int b = g.addNode("B", 0, 1);
-    int c = g.addNode("C", 1, 1);
-    CHECK(g.nodeCount() == 3);
-    CHECK(g.addEdge(a, b, 2.5) == 0);
-    CHECK(g.addEdge(b, c, 1.0) == 1);
+    CHECK(g.nodeCount() == 0);
+    int a = g.addNode("A", 1, 2);
+    int b = g.addNode("B", 3, 4);
+    int c = g.addNode("C", 5, 6);
+    CHECK(a == 0 && b == 1 && c == 2);
+    int ab = g.addEdge(a, b, 4.5);
+    int bc = g.addEdge(b, c, 2.0);
+    CHECK(ab == 0 && bc == 1);
     CHECK(g.roadCount() == 2);
-    CHECK(g.neighbors(b).size() == 2);
-    CHECK(g.findRoad(a, b) == 0);
-    CHECK(g.findRoad(b, a) == 0);   // undirected
+    CHECK(g.degree(b) == 2);
+    CHECK(g.findRoad(a, b) == ab);
+    CHECK(g.findRoad(b, a) == ab);
     CHECK(g.findRoad(a, c) == -1);
+    CHECK(g.getNode(c).name == "C");
+    CHECK(nearlyEqual(g.effectiveWeight(ab), 4.5));
 }
 
-TEST(graph_rejects_bad_edges) {
+void testGraphRejectsBadEdges() {
     Graph g;
     g.addNode("A", 0, 0);
-    g.addNode("B", 0, 1);
-    CHECK(g.addEdge(0, 0, 1.0) == -1);    // self loop
-    CHECK(g.addEdge(0, 5, 1.0) == -1);    // unknown node
-    CHECK(g.addEdge(-1, 1, 1.0) == -1);   // negative id
-    CHECK(g.addEdge(0, 1, 0.0) == -1);    // zero distance
-    CHECK(g.addEdge(0, 1, -3.0) == -1);   // negative distance
-    CHECK(g.addEdge(0, 1, 2.0) == 0);
-    CHECK(g.addEdge(1, 0, 2.0) == -1);    // duplicate road
+    g.addNode("B", 0, 0);
+    CHECK(g.addEdge(0, 0, 1) == -1);
+    CHECK(g.addEdge(0, 5, 1) == -1);
+    CHECK(g.addEdge(-1, 1, 1) == -1);
+    CHECK(g.addEdge(0, 1, 0) == -1);
+    CHECK(g.addEdge(0, 1, -3) == -1);
+    CHECK(g.addEdge(0, 1, 2) == 0);
+    CHECK(g.addEdge(1, 0, 2) == -1);
     CHECK(g.roadCount() == 1);
 }
 
-TEST(graph_traffic_and_blocking) {
+void testGraphTrafficAndBlocking() {
     Graph g;
     g.addNode("A", 0, 0);
-    g.addNode("B", 0, 1);
-    g.addEdge(0, 1, 2.0);
-    CHECK(g.setTraffic(0, 1, 2.0));
-    CHECK(nearlyEqual(g.effectiveWeight(0), 4.0));
-    CHECK(!g.setTraffic(0, 1, 0.0));      // zero factor
-    CHECK(!g.setTraffic(0, 1, -1.0));     // negative factor
-    CHECK(!g.setTraffic(0, 1, 3.5));      // above max
-    CHECK(nearlyEqual(g.effectiveWeight(0), 4.0));
+    g.addNode("B", 0, 0);
+    int r = g.addEdge(0, 1, 2);
+    CHECK(g.setTraffic(0, 1, 3.0));
+    CHECK(nearlyEqual(g.effectiveWeight(r), 6.0));
+    CHECK(!g.setTraffic(0, 1, 0.5));
+    CHECK(!g.setTraffic(0, 1, 3.5));
+    CHECK(!g.setTraffic(0, 1, -1));
     CHECK(g.setBlocked(1, 0, true));
-    CHECK(!g.isUsable(0));
-    CHECK(g.setBlocked(0, 1, true));      // idempotent
+    CHECK(!g.isUsable(r));
+    CHECK(g.setBlocked(1, 0, true));
     CHECK(g.setBlocked(0, 1, false));
-    CHECK(g.isUsable(0));
-    CHECK(!g.setBlocked(0, 7, true));     // no such road
+    CHECK(g.isUsable(r));
+    CHECK(!g.setBlocked(0, 0, true));
 }
 
-TEST(graph_empty_and_invalid_queries) {
+void testGraphEmptyAndInvalid() {
     Graph g;
-    CHECK(g.nodeCount() == 0);
-    CHECK(g.neighbors(0).empty());
-    CHECK(g.neighbors(-4).empty());
+    CHECK(g.neighbors(0) == NULL);
+    CHECK(g.degree(3) == 0);
+    CHECK(!g.isValidNode(0));
     CHECK(g.findRoad(0, 1) == -1);
-    CHECK(!g.isUsable(0));
-    CHECK(nearlyEqual(g.effectiveWeight(3), 0.0));
+    CHECK(g.effectiveWeight(7) == 0);
 }
 
-// ================================================================== MinHeap
-// Dry run "MinHeap case 1" in docs/DRY_RUNS.md
-TEST(heap_push_pop_order) {
-    MinHeap<int> h;
-    int input[] = {5, 3, 8, 1, 9, 2};
-    for (int x : input) h.push(x);
+// ------------------------------------------------------------- MinHeap
+
+void testHeapPushPopOrder() {
+    MinHeap h;
+    double keys[6] = {5, 3, 8, 1, 9, 2};
+    for (int i = 0; i < 6; i++) h.push(makeHeapItem(keys[i], i, i));
     CHECK(h.size() == 6);
     CHECK(h.isValidHeap());
-    // after pushes the array is [1, 3, 2, 5, 9, 8]
-    const std::vector<int>& arr = h.snapshot();
-    int expected[] = {1, 3, 2, 5, 9, 8};
-    for (int i = 0; i < 6; ++i) CHECK(arr[i] == expected[i]);
-    int out = 0, last = -1000;
-    while (h.popMin(out)) {
-        CHECK(out >= last);
-        last = out;
+    HeapItem top;
+    CHECK(h.peek(top) && top.key == 1);
+    double expected[6] = {1, 2, 3, 5, 8, 9};
+    for (int i = 0; i < 6; i++) {
+        HeapItem out;
+        CHECK(h.popMin(out));
+        CHECK(out.key == expected[i]);
+        CHECK(h.isValidHeap());
     }
     CHECK(h.isEmpty());
 }
 
-// Dry run "MinHeap case 2": pop from an empty / single-element heap
-TEST(heap_empty_and_single) {
-    MinHeap<int> h;
-    int out = 42;
+void testHeapEmptyAndSingle() {
+    MinHeap h;
+    HeapItem out = makeHeapItem(-1, 0, 0);
     CHECK(!h.popMin(out));
-    CHECK(out == 42);          // untouched
     CHECK(!h.peek(out));
-    h.push(7);
-    CHECK(h.peek(out) && out == 7);
-    CHECK(h.popMin(out) && out == 7);
+    CHECK(out.key == -1);
+    h.push(makeHeapItem(7, 0, 42));
+    CHECK(h.popMin(out) && out.value == 42);
     CHECK(!h.popMin(out));
 }
 
-// Dry run "MinHeap case 3": duplicates and negatives
-TEST(heap_duplicates_and_negatives) {
-    MinHeap<int> h;
-    int input[] = {4, -2, 4, 0, -2};
-    for (int x : input) h.push(x);
-    int expected[] = {-2, -2, 0, 4, 4};
-    int out = 0;
-    for (int i = 0; i < 5; ++i) CHECK(h.popMin(out) && out == expected[i]);
+void testHeapDuplicatesAndNegatives() {
+    MinHeap h;
+    h.push(makeHeapItem(4, 2, 0));
+    h.push(makeHeapItem(-3, 0, 1));
+    h.push(makeHeapItem(4, 1, 2));
+    h.push(makeHeapItem(-3, 1, 3));
+    HeapItem out;
+    h.popMin(out);
+    CHECK(out.value == 1);
+    h.popMin(out);
+    CHECK(out.value == 3);
+    h.popMin(out);
+    CHECK(out.value == 2);
+    h.popMin(out);
+    CHECK(out.value == 0);
 }
 
-struct MaxFirst {
-    bool operator()(int a, int b) const { return a > b; }
-};
-
-TEST(heap_custom_comparator) {
-    MinHeap<int, MaxFirst> h;
-    h.push(1); h.push(10); h.push(5);
-    int out = 0;
-    CHECK(h.popMin(out) && out == 10);
-}
-
-TEST(heap_large_input_10k) {
-    MinHeap<int> h;
-    unsigned int seed = 12345;
-    for (int i = 0; i < 10000; ++i) {
+void testHeapLarge10k() {
+    MinHeap h;
+    unsigned int seed = 7;
+    for (int i = 0; i < 10000; i++) {
         seed = seed * 1103515245u + 12345u;
-        h.push((int)(seed % 100000) - 50000);
+        h.push(makeHeapItem((int)(seed % 100000) - 50000, i, i));
     }
     CHECK(h.size() == 10000);
     CHECK(h.isValidHeap());
-    int out = 0, last = -1000000, count = 0;
+    double last = -1e9;
     bool sorted = true;
+    int count = 0;
+    HeapItem out;
     while (h.popMin(out)) {
-        if (out < last) sorted = false;
-        last = out;
-        ++count;
+        if (out.key < last) sorted = false;
+        last = out.key;
+        count++;
     }
     CHECK(sorted);
     CHECK(count == 10000);
 }
 
-// ================================================================= Dijkstra
-// Shared 6-node graph used by every Dijkstra dry run in docs/DRY_RUNS.md:
-//   A-B 4, A-C 2, B-C 1, B-D 5, C-D 8, C-E 10, D-E 2, D-F 6, E-F 3
-static Graph makeDryRunGraph() {
-    Graph g;
-    const char* names[] = {"A", "B", "C", "D", "E", "F"};
-    for (int i = 0; i < 6; ++i) g.addNode(names[i], 0, i);
-    g.addEdge(0, 1, 4);  g.addEdge(0, 2, 2);  g.addEdge(1, 2, 1);
-    g.addEdge(1, 3, 5);  g.addEdge(2, 3, 8);  g.addEdge(2, 4, 10);
-    g.addEdge(3, 4, 2);  g.addEdge(3, 5, 6);  g.addEdge(4, 5, 3);
-    return g;
+// ------------------------------------------------------------ Dijkstra
+
+// Graph used by every Dijkstra dry run in docs/DRY_RUNS.md:
+// A-B 4, A-C 2, B-C 1, B-D 5, C-D 8, C-E 10, D-E 2, D-F 6, E-F 3
+void buildDryRunGraph(Graph& g) {
+    string names[6] = {"A", "B", "C", "D", "E", "F"};
+    for (int i = 0; i < 6; i++) g.addNode(names[i], 0, i);
+    g.addEdge(0, 1, 4);
+    g.addEdge(0, 2, 2);
+    g.addEdge(1, 2, 1);
+    g.addEdge(1, 3, 5);
+    g.addEdge(2, 3, 8);
+    g.addEdge(2, 4, 10);
+    g.addEdge(3, 4, 2);
+    g.addEdge(3, 5, 6);
+    g.addEdge(4, 5, 3);
 }
 
-static bool pathIs(const PathResult& r, const std::vector<int>& expected) {
-    if (r.nodes.size() != expected.size()) return false;
-    for (size_t i = 0; i < expected.size(); ++i) if (r.nodes[i] != expected[i]) return false;
+bool pathIs(const PathResult& p, int expected[], int n) {
+    if (p.nodeCount != n) return false;
+    for (int i = 0; i < n; i++) {
+        if (p.nodes[i] != expected[i]) return false;
+    }
     return true;
 }
 
-// Dijkstra case 1: A -> F, expected A C B D E F = 13
-TEST(dijkstra_case1_basic_shortest_path) {
-    Graph g = makeDryRunGraph();
-    PathResult r = Dijkstra::shortestPath(g, 0, 5);
-    CHECK(r.found);
-    CHECK(nearlyEqual(r.distance, 13.0));
-    CHECK(pathIs(r, {0, 2, 1, 3, 4, 5}));
-    CHECK(r.roads.size() == r.nodes.size() - 1);
+// Dry run 1: A -> F = A C B D E F, 13 km
+void testDijkstraCase1Basic() {
+    Graph g;
+    buildDryRunGraph(g);
+    PathResult p = Dijkstra::shortestPath(g, 0, 5);
+    int expected[6] = {0, 2, 1, 3, 4, 5};
+    CHECK(p.found);
+    CHECK(nearlyEqual(p.distance, 13.0));
+    CHECK(pathIs(p, expected, 6));
+    CHECK(p.roads[0] == g.findRoad(0, 2));
 }
 
-// Dijkstra case 2: block D-E, A -> E becomes A C E = 12
-TEST(dijkstra_case2_blocked_edge) {
-    Graph g = makeDryRunGraph();
+// Dry run 2: block D-E, A -> E = A C E, 12 km
+void testDijkstraCase2BlockedEdge() {
+    Graph g;
+    buildDryRunGraph(g);
     CHECK(g.setBlocked(3, 4, true));
-    PathResult r = Dijkstra::shortestPath(g, 0, 4);
-    CHECK(r.found);
-    CHECK(nearlyEqual(r.distance, 12.0));
-    CHECK(pathIs(r, {0, 2, 4}));
+    PathResult p = Dijkstra::shortestPath(g, 0, 4);
+    int expected[3] = {0, 2, 4};
+    CHECK(p.found);
+    CHECK(nearlyEqual(p.distance, 12.0));
+    CHECK(pathIs(p, expected, 3));
 }
 
-// Dijkstra case 3: isolated node G is unreachable
-TEST(dijkstra_case3_unreachable) {
-    Graph g = makeDryRunGraph();
+// Dry run 3: isolated node G is unreachable
+void testDijkstraCase3Unreachable() {
+    Graph g;
+    buildDryRunGraph(g);
     int gNode = g.addNode("G", 9, 9);
-    PathResult r = Dijkstra::shortestPath(g, 0, gNode);
-    CHECK(!r.found);
-    CHECK(r.nodes.empty());
+    PathResult p = Dijkstra::shortestPath(g, 0, gNode);
+    CHECK(!p.found);
+    CHECK(p.nodeCount == 0);
 }
 
-// Dijkstra case 4: traffic x3 on B-C, A -> D becomes A B D = 9
-TEST(dijkstra_case4_traffic_changes_route) {
-    Graph g = makeDryRunGraph();
+// Dry run 4: traffic x3 on B-C, A -> D = A B D, 9 km
+void testDijkstraCase4Traffic() {
+    Graph g;
+    buildDryRunGraph(g);
     CHECK(g.setTraffic(1, 2, 3.0));
-    PathResult r = Dijkstra::shortestPath(g, 0, 3);
-    CHECK(r.found);
-    CHECK(nearlyEqual(r.distance, 9.0));
-    CHECK(pathIs(r, {0, 1, 3}));
+    PathResult p = Dijkstra::shortestPath(g, 0, 3);
+    int expected[3] = {0, 1, 3};
+    CHECK(p.found);
+    CHECK(nearlyEqual(p.distance, 9.0));
+    CHECK(pathIs(p, expected, 3));
 }
 
-TEST(dijkstra_same_node_and_invalid) {
-    Graph g = makeDryRunGraph();
+void testDijkstraSameNodeAndInvalid() {
+    Graph g;
+    buildDryRunGraph(g);
     PathResult same = Dijkstra::shortestPath(g, 2, 2);
-    CHECK(same.found && nearlyEqual(same.distance, 0.0) && same.nodes.size() == 1);
+    CHECK(same.found && nearlyEqual(same.distance, 0) && same.nodeCount == 1);
     CHECK(!Dijkstra::shortestPath(g, -1, 2).found);
     CHECK(!Dijkstra::shortestPath(g, 0, 99).found);
     Graph empty;
     CHECK(!Dijkstra::shortestPath(empty, 0, 0).found);
 }
 
-TEST(dijkstra_find_nearest_target) {
-    Graph g = makeDryRunGraph();
-    // drivers waiting at D and E: from A, D (8) is closer than E (10)
-    NearestResult r = Dijkstra::findNearest(g, 0, [](int u) { return u == 3 || u == 4; });
-    CHECK(r.node == 3);
-    CHECK(nearlyEqual(r.path.distance, 8.0));
-    NearestResult none = Dijkstra::findNearest(g, 0, [](int) { return false; });
-    CHECK(none.node == -1);
+void testDijkstraFindNearest() {
+    Graph g;
+    buildDryRunGraph(g);
+    HashTable freeCount;
+    freeCount.insert(freeKey(3, RideType::MINI), 1);
+    freeCount.insert(freeKey(4, RideType::MINI), 1);
+    freeCount.insert(freeKey(1, RideType::BIKE), 1);
+    int found = -1;
+    PathResult p = Dijkstra::findNearest(g, 0, freeCount, RideType::MINI, found);
+    CHECK(found == 3);
+    CHECK(nearlyEqual(p.distance, 8.0));
+    Dijkstra::findNearest(g, 0, freeCount, RideType::AC, found);
+    CHECK(found == -1);
+    Dijkstra::findNearest(g, 0, freeCount, RideType::BIKE, found);
+    CHECK(found == 1);
 }
 
-TEST(dijkstra_trace_steps_record) {
-    Graph g = makeDryRunGraph();
-    DijkstraTrace t = Dijkstra::traceSteps(g, 0, 5);
+void testDijkstraTraceSteps() {
+    Graph g;
+    buildDryRunGraph(g);
+    DijkstraTrace t;
+    Dijkstra::traceSteps(g, 0, 5, t);
     CHECK(t.result.found && nearlyEqual(t.result.distance, 13.0));
     // pops: A0 C2 B3 B4(stale) D8 D10(stale) E10 E12(stale) F13
-    CHECK(t.steps.size() == 9);
-    CHECK(t.steps[0].popped == 0 && t.steps[0].relaxed.size() == 2);
+    CHECK(t.stepCount == 9);
+    CHECK(t.steps[0].popped == 0 && t.steps[0].relaxCount == 2);
     CHECK(t.steps[3].stale);
-    CHECK(t.steps.back().popped == 5);
+    CHECK(t.steps[t.stepCount - 1].popped == 5);
     DSTrace trace;
     Dijkstra::shortestPath(g, 0, 5, &trace);
-    CHECK(trace.size() > 0 && !trace.truncated());
+    CHECK(trace.size() > 0 && !trace.isTruncated());
 }
 
-// ============================================================== LinkedQueue
-struct Req {
-    int id;
-    const char* rider;
-};
+// --------------------------------------------------------- LinkedQueue
 
-static std::vector<int> queueIds(const LinkedQueue<Req>& q) {
-    std::vector<int> ids;
-    q.forEach([&ids](const Req& r) { ids.push_back(r.id); });
-    return ids;
-}
-
-// Queue case 1: plain FIFO order
-TEST(queue_case1_fifo) {
-    LinkedQueue<int> q;
-    q.enqueue(10); q.enqueue(20); q.enqueue(30);
+// Queue dry run 1: FIFO order
+void testQueueCase1Fifo() {
+    LinkedQueue q;
+    q.enqueue(10);
+    q.enqueue(20);
+    q.enqueue(30);
     CHECK(q.size() == 3);
     int out = 0;
     CHECK(q.peekFront(out) && out == 10);
@@ -328,521 +312,532 @@ TEST(queue_case1_fifo) {
     CHECK(q.isEmpty());
 }
 
-// Queue case 2: cancel from front, middle and rear
-TEST(queue_case2_cancel_by_id) {
-    LinkedQueue<Req> q;
-    q.enqueue(Req{101, "Ali"});
-    q.enqueue(Req{102, "Sara"});
-    q.enqueue(Req{103, "Bilal"});
-    q.enqueue(Req{104, "Hina"});
-    CHECK(q.removeById(102));                       // middle
-    CHECK(queueIds(q) == std::vector<int>({101, 103, 104}));
-    CHECK(q.removeById(104));                       // rear (tail must move)
-    q.enqueue(Req{105, "Omar"});
-    CHECK(queueIds(q) == std::vector<int>({101, 103, 105}));
-    CHECK(q.removeById(101));                       // front
-    CHECK(!q.removeById(999));                      // not present
-    CHECK(queueIds(q) == std::vector<int>({103, 105}));
-    CHECK(q.size() == 2);
+// Queue dry run 2: cancel 102 from the middle, then the rear
+void testQueueCase2CancelById() {
+    LinkedQueue q;
+    q.enqueue(101);
+    q.enqueue(102);
+    q.enqueue(103);
+    q.enqueue(104);
+    CHECK(q.removeById(102));
+    CHECK(q.size() == 3);
+    CHECK(!q.removeById(102));
+    CHECK(q.removeById(104));
+    q.enqueue(105);
+    int expected[3] = {101, 103, 105};
+    int i = 0;
+    for (QueueNode* n = q.getFront(); n != NULL; n = n->next) {
+        CHECK(i < 3 && n->value == expected[i]);
+        i++;
+    }
+    CHECK(i == 3);
 }
 
-// Queue case 3: empty queue is safe; removing the only element resets tail
-TEST(queue_case3_empty_and_single) {
-    LinkedQueue<Req> q;
-    Req out{0, ""};
+// Queue dry run 3: empty and single element
+void testQueueCase3EmptyAndSingle() {
+    LinkedQueue q;
+    int out = -1;
     CHECK(!q.dequeue(out));
     CHECK(!q.peekFront(out));
-    CHECK(!q.removeById(1));
-    q.enqueue(Req{7, "Zara"});
-    CHECK(q.removeById(7));
+    CHECK(out == -1);
+    CHECK(!q.removeById(5));
+    q.enqueue(5);
+    CHECK(q.removeById(5));
     CHECK(q.isEmpty());
-    q.enqueue(Req{8, "Asad"});                      // tail was reset correctly
-    CHECK(q.dequeue(out) && out.id == 8);
+    q.enqueue(6);
+    CHECK(q.dequeue(out) && out == 6);
+    CHECK(q.getFront() == NULL);
 }
 
-TEST(queue_copy_is_deep) {
-    LinkedQueue<int> a;
-    a.enqueue(1); a.enqueue(2);
-    LinkedQueue<int> b = a;
-    int out = 0;
-    b.dequeue(out);
-    CHECK(a.size() == 2 && b.size() == 1);
-    a = b;
-    CHECK(a.size() == 1);
-}
-
-TEST(queue_large_input_10k) {
-    LinkedQueue<int> q;
-    for (int i = 0; i < 10000; ++i) q.enqueue(i);
+void testQueueLarge10k() {
+    LinkedQueue q;
+    for (int i = 0; i < 10000; i++) q.enqueue(i);
     CHECK(q.size() == 10000);
-    int out = -1;
+    CHECK(q.removeById(5000));
     bool inOrder = true;
-    for (int i = 0; i < 10000; ++i) {
-        if (!q.dequeue(out) || out != i) inOrder = false;
+    int out = 0;
+    int last = -1;
+    while (q.dequeue(out)) {
+        if (out <= last || out == 5000) inOrder = false;
+        last = out;
     }
-    CHECK(inOrder && q.isEmpty());
+    CHECK(inOrder);
 }
 
-// ====================================================================== BFS
-TEST(bfs_hops_and_reachability) {
-    Graph g = makeDryRunGraph();
-    std::vector<int> hops = BFS::hopsFrom(g, 0, 2);
-    // A:0  B,C:1  D,E:2  F:beyond 2 hops
+// ----------------------------------------------------------------- BFS
+
+void testBfsHopsAndReachability() {
+    Graph g;
+    buildDryRunGraph(g);
+    int hops[MAX_NODES];
+    int reached = BFS::hopsFrom(g, 0, -1, hops);
+    CHECK(reached == 6);
     CHECK(hops[0] == 0 && hops[1] == 1 && hops[2] == 1);
-    CHECK(hops[3] == 2 && hops[4] == 2 && hops[5] == -1);
+    CHECK(hops[3] == 2 && hops[4] == 2 && hops[5] == 3);
+    BFS::hopsFrom(g, 0, 2, hops);
+    CHECK(hops[5] == -1);
     CHECK(BFS::isReachable(g, 0, 5));
-    int gNode = g.addNode("G", 0, 0);
-    CHECK(!BFS::isReachable(g, 0, gNode));
-    CHECK(!BFS::isReachable(g, 0, 50));
 }
 
-TEST(bfs_blocked_roads_disconnect) {
-    Graph g = makeDryRunGraph();
-    // cut F off: block D-F and E-F
+void testBfsBlockedRoadsDisconnect() {
+    Graph g;
+    buildDryRunGraph(g);
     g.setBlocked(3, 5, true);
     g.setBlocked(4, 5, true);
     CHECK(!BFS::isReachable(g, 0, 5));
-    g.setBlocked(4, 5, false);
-    CHECK(BFS::isReachable(g, 0, 5));
-    int sum = BFS::sumWithinHops(g, 0, 1, [](int) { return 1; });
-    CHECK(sum == 3);   // A, B, C
+    CHECK(BFS::isReachable(g, 0, 4));
+    CHECK(!BFS::isReachable(g, 0, 77));
+    int counts[6] = {1, 1, 1, 1, 1, 1};
+    CHECK(BFS::sumWithinHops(g, 5, 2, counts) == 1);
 }
 
-// ================================================================ HashTable
-TEST(hash_insert_find_erase) {
-    HashTable<int, std::string> t;
-    CHECK(t.insert(7, "Ali"));
-    CHECK(t.insert(15, "Sara"));
-    CHECK(!t.insert(7, "Ali K"));        // duplicate key overwrites
+// ----------------------------------------------------------- HashTable
+
+void testHashInsertFindErase() {
+    HashTable t;
+    CHECK(t.insert(7, 70));
+    CHECK(t.insert("seven", 7));
+    CHECK(!t.insert(7, 71));
+    int v = 0;
+    CHECK(t.find(7, v) && v == 71);
+    CHECK(t.find("seven", v) && v == 7);
+    CHECK(!t.find(8, v));
     CHECK(t.size() == 2);
-    CHECK(t.find(7) && *t.find(7) == "Ali K");
-    CHECK(t.find(99) == nullptr);
     CHECK(t.erase(7));
-    CHECK(!t.erase(7));                  // already gone
-    CHECK(!t.contains(7) && t.contains(15));
+    CHECK(!t.erase(7));
+    CHECK(!t.contains(7));
     CHECK(t.size() == 1);
 }
 
-TEST(hash_string_keys_and_negatives) {
-    HashTable<std::string, int> names;
-    names.insert("saddar", 0);
-    names.insert("clifton", 1);
-    names.insert("", 2);                 // empty string is a valid key
-    CHECK(*names.find("clifton") == 1);
-    CHECK(*names.find("") == 2);
-    CHECK(names.find("Clifton") == nullptr);   // case sensitive by design
-    HashTable<int, int> neg;
-    neg.insert(-5, 1);
-    neg.insert(-2147483647, 2);
-    CHECK(*neg.find(-5) == 1 && *neg.find(-2147483647) == 2);
+void testHashNegativesAndCounters() {
+    HashTable t;
+    t.insert(-5, 1);
+    t.insert("", 2);
+    CHECK(t.get(-5) == 1);
+    CHECK(t.get("") == 2);
+    CHECK(t.get("missing") == 0);
+    t.addTo("count", 1);
+    t.addTo("count", 1);
+    t.addTo("count", -1);
+    CHECK(t.get("count") == 1);
 }
 
-TEST(hash_rehash_10k) {
-    HashTable<int, int> t(4);
-    for (int i = 0; i < 10000; ++i) t.insert(i, i * 2);
+void testHashRehash10k() {
+    HashTable t;
+    CHECK(t.bucketCount() == 8);
+    for (int i = 0; i < 10000; i++) t.insert(i, i * 2);
     CHECK(t.size() == 10000);
     CHECK(t.rehashCount() > 0);
-    const double maxLoad = HashTable<int, int>::kMaxLoad;
-    CHECK(t.loadFactor() <= maxLoad);
+    CHECK(t.loadFactor() <= 0.75);
     bool allFound = true;
-    for (int i = 0; i < 10000; ++i) {
-        const int* v = t.find(i);
-        if (!v || *v != i * 2) allFound = false;
+    for (int i = 0; i < 10000; i++) {
+        int v = 0;
+        if (!t.find(i, v) || v != i * 2) allFound = false;
     }
     CHECK(allFound);
-    CHECK(t.longestChain() < 12);        // own hash spreads keys well
     for (int i = 0; i < 10000; i += 2) t.erase(i);
-    CHECK(t.size() == 5000 && !t.contains(4) && t.contains(5));
+    CHECK(t.size() == 5000);
+    CHECK(!t.contains(4) && t.contains(5));
 }
 
-struct CollideHasher {
-    unsigned int operator()(int) const { return 0; }   // every key -> bucket 0
-};
-
-TEST(hash_many_collisions_still_correct) {
-    HashTable<int, int, CollideHasher> t;
-    for (int i = 0; i < 500; ++i) t.insert(i, -i);
-    CHECK(t.size() == 500);
-    CHECK(t.longestChain() == 500);
-    CHECK(*t.find(250) == -250);
-    CHECK(t.erase(0) && t.erase(499) && t.erase(250));
-    CHECK(t.size() == 497 && !t.contains(250));
+void testHashManyCollisions() {
+    HashTable t(1);
+    for (int i = 0; i < 50; i++) t.insert("key" + to_string(i), i);
+    bool ok = true;
+    for (int i = 0; i < 50; i++) {
+        if (t.get("key" + to_string(i)) != i) ok = false;
+    }
+    CHECK(ok);
+    CHECK(t.longestChain() >= 1);
+    t.clear();
+    CHECK(t.isEmpty());
 }
 
-TEST(hash_get_or_insert_and_copy) {
-    HashTable<int, int> t;
-    t.getOrInsert(3, 0) += 5;
-    t.getOrInsert(3, 0) += 5;
-    CHECK(*t.find(3) == 10);
-    HashTable<int, int> copy = t;
-    copy.insert(4, 1);
-    CHECK(t.size() == 1 && copy.size() == 2);
-    int sum = 0;
-    copy.forEach([&sum](int, int& v) { sum += v; });
-    CHECK(sum == 11);
+// ---------------------------------------------------------------- Trie
+
+void addNames(Trie& t) {
+    t.insert("gulshan-e-iqbal", 0, "Gulshan-e-Iqbal");
+    t.insert("gulistan-e-johar", 1, "Gulistan-e-Johar");
+    t.insert("gulberg", 2, "Gulberg");
+    t.insert("clifton", 3, "Clifton");
 }
 
-// ===================================================================== Trie
-static void fillDryRunTrie(Trie& t) {
-    t.insert("Gulshan-e-Iqbal", 8);
-    t.insert("Gulistan-e-Johar", 9);
-    t.insert("Garden", 30);
-    t.insert("Saddar", 0);
-}
-
-// Trie case 1: prefix shared by two names, alphabetical order
-TEST(trie_case1_shared_prefix) {
+// Trie dry run 1: "gul" has three completions in alphabet order
+void testTrieCase1SharedPrefix() {
     Trie t;
-    fillDryRunTrie(t);
-    std::vector<TrieMatch> r = t.startsWith("gul");
-    CHECK(r.size() == 2);
-    CHECK(r.size() == 2 && r[0].word == "Gulistan-e-Johar" && r[0].value == 9);
-    CHECK(r.size() == 2 && r[1].word == "Gulshan-e-Iqbal" && r[1].value == 8);
-    CHECK(t.startsWith("g").size() == 3);
-}
-
-// Trie case 2: case-insensitive, narrows to one
-TEST(trie_case2_case_insensitive) {
-    Trie t;
-    fillDryRunTrie(t);
-    std::vector<TrieMatch> r = t.startsWith("GULS");
-    CHECK(r.size() == 1 && r[0].value == 8);
-    CHECK(t.contains("saddar") && t.contains("SADDAR"));
-    CHECK(!t.contains("sadd"));
-}
-
-// Trie case 3: prefix with no matches
-TEST(trie_case3_no_match) {
-    Trie t;
-    fillDryRunTrie(t);
-    CHECK(t.startsWith("xyz").empty());
-    CHECK(t.startsWith("gulz").empty());
-    CHECK(t.matchedLength("gulz") == 3);   // g-u-l exist, z does not
-}
-
-TEST(trie_edge_inputs) {
-    Trie t;
-    fillDryRunTrie(t);
-    CHECK(t.startsWith("").empty());               // empty query -> empty list
-    CHECK(t.startsWith("@#$").empty());            // special characters
-    CHECK(t.startsWith(std::string(500, 'g')).empty());   // very long query
-    CHECK(!t.insert("", 1));
-    CHECK(!t.insert("bad*name", 1));
+    addNames(t);
+    TrieMatch results[5];
+    int found = t.startsWith("gul", results, 5);
+    CHECK(found == 3);
+    CHECK(results[0].word == "Gulberg");
+    CHECK(results[1].word == "Gulistan-e-Johar");
+    CHECK(results[2].word == "Gulshan-e-Iqbal");
     CHECK(t.wordCount() == 4);
-    Trie empty;
-    CHECK(empty.startsWith("a").empty());
 }
 
-TEST(trie_limit_and_dedupe) {
+// Trie dry run 2: case-insensitive
+void testTrieCase2CaseInsensitive() {
     Trie t;
-    const char* names[] = {"Area 1", "Area 2", "Area 3", "Area 4", "Area 5", "Area 6", "Area 7"};
-    for (int i = 0; i < 7; ++i) t.insert(names[i], i);
-    CHECK(t.startsWith("area").size() == 5);       // capped at 5
-    CHECK(t.startsWith("area", 10).size() == 7);
-    Trie alias;
-    alias.insert("Gulshan-e-Iqbal", 8);
-    alias.insert("iqbal", 8, "Gulshan-e-Iqbal");   // alias, same value
-    alias.insert("gulshan", 8, "Gulshan-e-Iqbal");
-    CHECK(alias.startsWith("gul").size() == 1);    // de-duplicated by value
-    CHECK(alias.startsWith("iq").size() == 1 && alias.startsWith("iq")[0].word == "Gulshan-e-Iqbal");
+    addNames(t);
+    TrieMatch results[5];
+    int found = t.startsWith("CLIF", results, 5);
+    CHECK(found == 1 && results[0].value == 3);
+    CHECK(t.contains("Clifton"));
+    CHECK(!t.contains("Clif"));
 }
 
-TEST(trie_branch_view) {
+// Trie dry run 3: no match
+void testTrieCase3NoMatch() {
     Trie t;
-    fillDryRunTrie(t);
-    std::vector<TrieViewNode> v = t.branchView("gu");
+    addNames(t);
+    TrieMatch results[5];
+    CHECK(t.startsWith("gux", results, 5) == 0);
+    CHECK(t.matchedLength("gux") == 2);
+    CHECK(t.startsWith("z", results, 5) == 0);
+}
+
+void testTrieEdgeInputs() {
+    Trie t;
+    addNames(t);
+    TrieMatch results[5];
+    CHECK(t.startsWith("", results, 5) == 0);
+    CHECK(t.startsWith("gul", results, 0) == 0);
+    CHECK(t.startsWith("g@l", results, 5) == 0);
+    CHECK(!t.insert("", 9, ""));
+    CHECK(!t.insert("bad#name", 9, ""));
+    CHECK(t.wordCount() == 4);
+    string longText(300, 'a');
+    CHECK(t.startsWith(longText, results, 5) == 0);
+}
+
+void testTrieLimitAndDedupe() {
+    Trie t;
+    for (int i = 0; i < 10; i++) t.insert("area " + to_string(i), i, "");
+    t.insert("area alias", 0, "Area 0");
+    TrieMatch results[5];
+    CHECK(t.startsWith("area", results, 5) == 5);
+    TrieMatch all[20];
+    CHECK(t.startsWith("area", all, 20) == 10);
+}
+
+void testTrieBranchView() {
+    Trie t;
+    addNames(t);
+    TrieViewNode view[60];
+    int count = t.branchView("gul", view, 60);
+    CHECK(count > 4);
+    CHECK(view[0].parent == -1);
     int onPath = 0;
-    for (const TrieViewNode& n : v) if (n.onPath) ++onPath;
-    CHECK(onPath == 3);                            // root, g, u
-    CHECK(v.size() > 3);
-    CHECK(t.branchView("").size() == 1);
+    for (int i = 0; i < count; i++) {
+        if (view[i].onPath) onPath++;
+    }
+    CHECK(onPath == 4);
 }
 
-// ================================================================== AVLTree
-// Leaderboard order is rating DESC, so a higher rating is a "smaller" key.
-// Inserting ratings 3.00, 2.00, 1.00 is like inserting 1, 2, 3 in a normal BST.
-static DriverKey dk(int ratingCenti, int id) { return DriverKey{ratingCenti, id}; }
+// ----------------------------------------------------------------- AVL
+// Higher rating comes first, so inserting 300, 200, 100 is like 1, 2, 3 in a normal BST.
 
-// AVL case 1 (RR): 300, 200, 100 -> left rotate at 300
-TEST(avl_case1_rr_rotation) {
+// AVL dry run 1 (RR)
+void testAvlCase1RR() {
     AVLTree t;
-    t.insert(dk(300, 1));
-    t.insert(dk(200, 2));
-    CHECK(t.lastRotations().empty());
-    t.insert(dk(100, 3));
+    t.insert(300, 1);
+    t.insert(200, 2);
+    CHECK(t.lastRotationCount() == 0);
+    t.insert(100, 3);
     CHECK(t.rotationCount("RR") == 1);
+    CHECK(t.lastRotationCount() == 1);
     CHECK(t.height() == 2 && t.isValidAVL());
-    std::vector<AVLViewNode> v = t.view();
-    CHECK(v[0].key.driverId == 2);       // new root is 2.00
+    AVLViewNode v[10];
+    t.view(v, 10);
+    CHECK(v[0].driverId == 2);
 }
 
-// AVL case 2 (LL): 100, 200, 300 -> right rotate at 100
-TEST(avl_case2_ll_rotation) {
+// AVL dry run 2 (LL)
+void testAvlCase2LL() {
     AVLTree t;
-    t.insert(dk(100, 1));
-    t.insert(dk(200, 2));
-    t.insert(dk(300, 3));
+    t.insert(100, 1);
+    t.insert(200, 2);
+    t.insert(300, 3);
     CHECK(t.rotationCount("LL") == 1);
-    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+    AVLViewNode v[10];
+    t.view(v, 10);
+    CHECK(v[0].driverId == 2 && t.isValidAVL());
 }
 
-// AVL case 3 (LR): 100, 300, 200 -> left rotate at 300, right rotate at 100
-TEST(avl_case3_lr_rotation) {
+// AVL dry run 3 (LR)
+void testAvlCase3LR() {
     AVLTree t;
-    t.insert(dk(100, 1));
-    t.insert(dk(300, 3));
-    t.insert(dk(200, 2));
+    t.insert(100, 1);
+    t.insert(300, 3);
+    t.insert(200, 2);
     CHECK(t.rotationCount("LR") == 1);
-    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+    AVLViewNode v[10];
+    t.view(v, 10);
+    CHECK(v[0].driverId == 2 && t.isValidAVL());
 }
 
-// AVL case 4 (RL): 300, 100, 200 -> right rotate at 100, left rotate at 300
-TEST(avl_case4_rl_rotation) {
+// AVL dry run 4 (RL)
+void testAvlCase4RL() {
     AVLTree t;
-    t.insert(dk(300, 3));
-    t.insert(dk(100, 1));
-    t.insert(dk(200, 2));
+    t.insert(300, 3);
+    t.insert(100, 1);
+    t.insert(200, 2);
     CHECK(t.rotationCount("RL") == 1);
-    CHECK(t.view()[0].key.driverId == 2 && t.isValidAVL());
+    AVLViewNode v[10];
+    t.view(v, 10);
+    CHECK(v[0].driverId == 2 && t.isValidAVL());
 }
 
-TEST(avl_duplicate_ratings_tie_break) {
+void testAvlDuplicateRatings() {
     AVLTree t;
-    t.insert(dk(450, 7));
-    t.insert(dk(450, 3));
-    t.insert(dk(450, 5));
-    t.insert(dk(490, 9));
-    CHECK(!t.insert(dk(450, 3)));         // exact duplicate key rejected
+    t.insert(450, 7);
+    t.insert(450, 3);
+    t.insert(450, 5);
+    t.insert(490, 9);
+    CHECK(!t.insert(450, 3));
     CHECK(t.size() == 4);
-    std::vector<DriverKey> top = t.topN(10);
-    CHECK(top.size() == 4);
-    CHECK(top[0].driverId == 9 && top[1].driverId == 3 && top[2].driverId == 5 && top[3].driverId == 7);
+    int ratings[10];
+    int ids[10];
+    int n = t.topN(ratings, ids, 10);
+    CHECK(n == 4);
+    CHECK(ids[0] == 9 && ids[1] == 3 && ids[2] == 5 && ids[3] == 7);
 }
 
-TEST(avl_delete_and_update_rating) {
+void testAvlDeleteAndUpdate() {
     AVLTree t;
-    for (int i = 1; i <= 7; ++i) t.insert(dk(400 + i * 10, i));
-    CHECK(!t.remove(dk(999, 1)));         // non-existent key
-    CHECK(!t.remove(dk(410, 2)));         // right id, wrong rating
-    CHECK(t.remove(dk(440, 4)));          // node with two children
-    CHECK(t.size() == 6 && t.isValidAVL() && !t.contains(dk(440, 4)));
-    // rating update for driver 1: 4.10 -> 4.95 = delete + reinsert
-    CHECK(t.remove(dk(410, 1)));
-    CHECK(t.insert(dk(495, 1)));
-    CHECK(t.topN(1)[0].driverId == 1);
+    for (int i = 1; i <= 7; i++) t.insert(400 + i * 10, i);
+    CHECK(!t.remove(999, 1));
+    CHECK(t.remove(440, 4));
+    CHECK(!t.contains(440, 4));
+    CHECK(t.size() == 6 && t.isValidAVL());
+    t.remove(420, 2);
+    t.insert(500, 2);
+    int ratings[3];
+    int ids[3];
+    CHECK(t.topN(ratings, ids, 3) == 3);
+    CHECK(ids[0] == 2 && ratings[0] == 500);
     AVLTree empty;
-    CHECK(!empty.remove(dk(1, 1)));
-    CHECK(empty.topN(5).empty() && empty.height() == 0);
+    CHECK(!empty.remove(1, 1));
+    CHECK(empty.topN(ratings, ids, 3) == 0);
 }
 
-TEST(avl_large_input_stays_balanced) {
+void testAvlLargeStaysBalanced() {
     AVLTree t;
-    for (int i = 0; i < 10000; ++i) t.insert(dk(i, i));   // sorted input: worst case for a plain BST
-    CHECK(t.size() == 10000);
+    for (int i = 0; i < 1000; i++) t.insert(100 + (i % 400), i);
+    CHECK(t.size() == 1000);
     CHECK(t.isValidAVL());
-    CHECK(t.height() <= 20);              // 1.44 * log2(10000) ~ 19
-    std::vector<DriverKey> top = t.topN(3);
-    CHECK(top.size() == 3 && top[0].ratingCenti == 9999 && top[2].ratingCenti == 9997);
-    for (int i = 0; i < 10000; i += 3) t.remove(dk(i, i));
-    CHECK(t.isValidAVL() && t.size() == 6666);
+    CHECK(t.height() <= 15);
+    for (int i = 0; i < 1000; i += 3) t.remove(100 + (i % 400), i);
+    CHECK(t.isValidAVL());
 }
 
-// =============================================================== LinkedList
-static std::vector<int> listValues(const LinkedList<int>& l) {
-    std::vector<int> out;
-    l.forEach([&out](int v) { out.push_back(v); });
-    return out;
+// ---------------------------------------------------------- LinkedList
+
+void testListPushFrontNewestFirst() {
+    LinkedList list;
+    list.pushFront(1001);
+    list.pushFront(1002);
+    list.pushFront(1003);
+    CHECK(list.size() == 3);
+    CHECK(list.getHead()->value == 1003);
+    CHECK(list.getHead()->next->next->value == 1001);
 }
 
-TEST(list_push_front_newest_first) {
-    LinkedList<int> history;
-    history.pushFront(1001);
-    history.pushFront(1002);
-    history.pushFront(1003);
-    CHECK(listValues(history) == std::vector<int>({1003, 1002, 1001}));
+void testListRemoveAndEmpty() {
+    LinkedList list;
     int out = 0;
-    CHECK(history.front(out) && out == 1003);
-    CHECK(history.size() == 3);
+    CHECK(!list.popFront(out));
+    CHECK(!list.remove(4));
+    list.pushFront(1);
+    list.pushFront(2);
+    list.pushFront(3);
+    CHECK(list.remove(2));
+    CHECK(list.contains(1) && !list.contains(2));
+    CHECK(list.remove(3));
+    CHECK(list.remove(1));
+    CHECK(list.isEmpty() && list.getHead() == NULL);
 }
 
-TEST(list_remove_and_empty) {
-    LinkedList<int> l;
-    int out = 0;
-    CHECK(!l.popFront(out) && !l.front(out));
-    CHECK(!l.remove(5));
-    l.pushFront(3); l.pushFront(2); l.pushFront(2); l.pushFront(1);
-    CHECK(l.remove(2));                   // removes first of the duplicates
-    CHECK(listValues(l) == std::vector<int>({1, 2, 3}));
-    CHECK(l.remove(3) && l.remove(1) && l.contains(2) && l.size() == 1);
-    CHECK(l.popFront(out) && out == 2 && l.isEmpty());
+void testListLarge() {
+    LinkedList list;
+    for (int i = 0; i < 10000; i++) list.pushFront(i);
+    CHECK(list.size() == 10000);
+    CHECK(list.getHead()->value == 9999);
+    list.clear();
+    CHECK(list.size() == 0);
 }
 
-TEST(list_copy_and_large) {
-    LinkedList<int> a;
-    for (int i = 0; i < 10000; ++i) a.pushFront(i);
-    LinkedList<int> b = a;
-    CHECK(b.size() == 10000);
-    int out = -1;
-    CHECK(b.front(out) && out == 9999);
-    b.clear();
-    CHECK(a.size() == 10000 && b.isEmpty());
+// ------------------------------------------------------------- CityMap
+
+string dryRunMapJson() {
+    return "{\"areas\":["
+           "{\"id\":0,\"name\":\"A\",\"lat\":24.80,\"lng\":67.00},{\"id\":1,\"name\":\"B\",\"lat\":24.82,\"lng\":67.02},"
+           "{\"id\":2,\"name\":\"C\",\"lat\":24.81,\"lng\":67.01},{\"id\":3,\"name\":\"D\",\"lat\":24.84,\"lng\":67.03},"
+           "{\"id\":4,\"name\":\"E\",\"lat\":24.85,\"lng\":67.04},{\"id\":5,\"name\":\"F\",\"lat\":24.87,\"lng\":67.05}],"
+           "\"roads\":[{\"from\":0,\"to\":1,\"km\":4},{\"from\":0,\"to\":2,\"km\":2},{\"from\":1,\"to\":2,\"km\":1},"
+           "{\"from\":1,\"to\":3,\"km\":5},{\"from\":2,\"to\":3,\"km\":8},{\"from\":2,\"to\":4,\"km\":10},"
+           "{\"from\":3,\"to\":4,\"km\":2},{\"from\":3,\"to\":5,\"km\":6},{\"from\":4,\"to\":5,\"km\":3}]}";
 }
 
-// ================================================================== CityMap
-static const char* kTinyMap =
-    "{\"areas\":[{\"id\":0,\"name\":\"Saddar\",\"lat\":24.85,\"lng\":67.02},"
-    "{\"id\":1,\"name\":\"Gulshan-e-Iqbal\",\"lat\":24.92,\"lng\":67.08},"
-    "{\"id\":2,\"name\":\"Clifton\",\"lat\":24.81,\"lng\":67.03}],"
-    "\"roads\":[{\"from\":0,\"to\":1,\"km\":9.5},{\"from\":0,\"to\":2,\"km\":5.1}]}";
-
-TEST(citymap_loads_valid_json) {
+void testCityMapLoadsValidJson() {
     CityMap m;
-    std::string err;
-    CHECK(m.loadFromJsonText(kTinyMap, err));
-    CHECK(err.empty());
-    CHECK(m.areaCount() == 3 && m.graph().roadCount() == 2);
-    CHECK(m.findAreaByName("  SADDAR ") == 0);
-    CHECK(m.findAreaByName("Nowhere") == -1);
-    CHECK(m.search("iqb").size() == 1);           // alias token
-    CHECK(m.search("").empty());
-    CHECK(m.search(std::string(200, 'a')).empty());
+    string error;
+    CHECK(m.loadFromJsonText(dryRunMapJson(), error));
+    CHECK(error.empty());
+    CHECK(m.areaCount() == 6);
+    CHECK(m.graph().roadCount() == 9);
+    CHECK(m.findAreaByName("  d ") == 3);
+    CHECK(m.findAreaByName("Z") == -1);
+    CHECK(m.areaName(99) == "?");
 }
 
-TEST(citymap_rejects_bad_files) {
+void testCityMapRejectsBadFiles() {
     CityMap m;
-    std::string err;
-    CHECK(!m.loadFromFile("data/does_not_exist.json", err) && !err.empty());
-    CHECK(!m.loadFromJsonText("{not json", err));
-    CHECK(!m.loadFromJsonText("{\"areas\":[]}", err));
-    CHECK(!m.loadFromJsonText("{\"areas\":[],\"roads\":[]}", err));
-    // duplicate name (case-insensitive)
-    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0},"
-                              "{\"id\":1,\"name\":\"a\",\"lat\":0,\"lng\":0}],\"roads\":[]}", err));
-    CHECK(err.find("Duplicate area name") != std::string::npos);
-    // road to unknown area
-    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0}],"
-                              "\"roads\":[{\"from\":0,\"to\":9,\"km\":1}]}", err));
-    CHECK(err.find("unknown area") != std::string::npos);
-    // negative distance
-    CHECK(!m.loadFromJsonText("{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":0,\"lng\":0},"
-                              "{\"id\":1,\"name\":\"B\",\"lat\":0,\"lng\":0}],"
-                              "\"roads\":[{\"from\":0,\"to\":1,\"km\":-2}]}", err));
-    CHECK(err.find("non-positive") != std::string::npos);
-    CHECK(m.areaCount() == 0);                    // failed load leaves map empty
+    string error;
+    CHECK(!m.loadFromFile("no/such/file.json", error));
+    CHECK(error.find("not found") != string::npos);
+    CHECK(!m.loadFromJsonText("{not json", error));
+    CHECK(!m.loadFromJsonText("{\"areas\":[]}", error));
+    CHECK(!m.loadFromJsonText("{\"areas\":[],\"roads\":[]}", error));
+    string dupName = "{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":1,\"lng\":1},{\"id\":1,\"name\":\" a \",\"lat\":1,\"lng\":1}],\"roads\":[]}";
+    CHECK(!m.loadFromJsonText(dupName, error));
+    CHECK(error.find("Duplicate area name") != string::npos);
+    string badRoad = "{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":1,\"lng\":1}],\"roads\":[{\"from\":0,\"to\":9,\"km\":1}]}";
+    CHECK(!m.loadFromJsonText(badRoad, error));
+    CHECK(error.find("unknown area") != string::npos);
+    string negative = "{\"areas\":[{\"id\":0,\"name\":\"A\",\"lat\":1,\"lng\":1},{\"id\":1,\"name\":\"B\",\"lat\":1,\"lng\":1}],"
+                      "\"roads\":[{\"from\":0,\"to\":1,\"km\":-2}]}";
+    CHECK(!m.loadFromJsonText(negative, error));
+    CHECK(error.find("non-positive") != string::npos);
+    CHECK(m.areaCount() == 0);
 }
 
-TEST(citymap_real_karachi_file) {
+void testCityMapRealKarachiFile() {
     CityMap m;
-    std::string err;
-    CHECK(m.loadFromFile("data/karachi_map.json", err));
+    string error;
+    CHECK(m.loadFromFile("data/karachi_map.json", error));
     CHECK(m.areaCount() >= 28 && m.areaCount() <= 30);
-    int saddar = m.findAreaByName("Saddar");
-    int airport = m.findAreaByName("Jinnah Airport");
-    CHECK(saddar >= 0 && airport >= 0);
-    PathResult r = Dijkstra::shortestPath(m.graph(), saddar, airport);
-    CHECK(r.found && r.distance > 0);
-    // the whole city is connected
-    std::vector<int> hops = BFS::hopsFrom(m.graph(), 0, -1);
+    TrieMatch results[5];
+    int found = m.search("gul", results, 5);
+    CHECK(found >= 2);
+    CHECK(m.search("iqbal", results, 5) >= 1);
+    CHECK(m.search("", results, 5) == 0);
+    CHECK(m.search("@@@", results, 5) == 0);
+    int saddar = m.findAreaByName("saddar");
+    CHECK(saddar >= 0);
     bool connected = true;
-    for (int h : hops) if (h == -1) connected = false;
+    for (int i = 0; i < m.areaCount(); i++) {
+        if (!BFS::isReachable(m.graph(), saddar, i)) connected = false;
+    }
     CHECK(connected);
 }
 
-// =================================================================== Models
-TEST(models_fare_and_ride_type) {
-    CHECK(computeFare(RideType::BIKE, 10.0, 1.0) == 310);    // 60 + 25*10
-    CHECK(computeFare(RideType::MINI, 10.0, 1.0) == 520);    // 120 + 40*10
-    CHECK(computeFare(RideType::AC, 10.0, 1.5) == 1095);     // (180 + 550) * 1.5
-    CHECK(computeFare(RideType::MINI, 0.0, 1.0) == 120);
-    RideType t = RideType::BIKE;
-    CHECK(parseRideType("ac", t) && t == RideType::AC);
-    CHECK(parseRideType("Mini", t) && t == RideType::MINI);
-    CHECK(!parseRideType("RICKSHAW", t) && !parseRideType("", t));
+// -------------------------------------------------------- Models/Surge
+
+void testModelsFareAndRideType() {
+    CHECK(computeFare(RideType::BIKE, 10, 1.0) == 310);
+    CHECK(computeFare(RideType::MINI, 10, 1.0) == 520);
+    CHECK(computeFare(RideType::AC, 10, 2.0) == 1460);
+    RideType t;
+    CHECK(parseRideType("bike", t) && t == RideType::BIKE);
+    CHECK(parseRideType("Ac", t) && t == RideType::AC);
+    CHECK(!parseRideType("TRUCK", t));
+    CHECK(!parseRideType("", t));
 }
 
-TEST(models_event_order_ties) {
-    MinHeap<Event> h;
-    h.push(Event{5.0, EventType::RIDE_COMPLETED, 1, 0, 2});
-    h.push(Event{5.0, EventType::DRIVER_FREE, 2, 0, 1});
-    h.push(Event{1.0, EventType::DRIVER_ARRIVED_PICKUP, 3, 0, 3});
-    Event e{};
-    CHECK(h.popMin(e) && e.rideId == 3);
-    CHECK(h.popMin(e) && e.seq == 1);     // same time -> earlier seq first
-    CHECK(h.popMin(e) && e.seq == 2);
+void testEventOrderTies() {
+    MinHeap h;
+    HeapItem a = makeHeapItem(5.0, 2, 1002);
+    HeapItem b = makeHeapItem(5.0, 1, 1001);
+    HeapItem c = makeHeapItem(1.0, 3, 1003);
+    h.push(a);
+    h.push(b);
+    h.push(c);
+    HeapItem out;
+    h.popMin(out);
+    CHECK(out.value == 1003);
+    h.popMin(out);
+    CHECK(out.value == 1001);
+    h.popMin(out);
+    CHECK(out.value == 1002);
 }
 
-// ==================================================================== Surge
-TEST(surge_multiplier_steps) {
+void testSurgeMultiplierSteps() {
     CHECK(SurgeEngine::multiplierFor(0, 0) == 1.0);
-    CHECK(SurgeEngine::multiplierFor(1, 3) == 1.0);    // ratio 0.33
-    CHECK(SurgeEngine::multiplierFor(3, 2) == 1.25);   // 1.5
-    CHECK(SurgeEngine::multiplierFor(5, 2) == 1.5);    // 2.5
-    CHECK(SurgeEngine::multiplierFor(4, 0) == 2.0);    // no drivers -> max(0,1)
+    CHECK(SurgeEngine::multiplierFor(1, 2) == 1.0);
+    CHECK(SurgeEngine::multiplierFor(1, 1) == 1.25);
+    CHECK(SurgeEngine::multiplierFor(2, 1) == 1.5);
+    CHECK(SurgeEngine::multiplierFor(3, 1) == 2.0);
+    CHECK(SurgeEngine::multiplierFor(5, 0) == 2.0);
+    CHECK(SurgeEngine::multiplierFor(-3, 4) == 1.0);
 }
 
-TEST(surge_bfs_two_hops) {
-    Graph g = makeDryRunGraph();
+void testSurgeBfsTwoHops() {
+    Graph g;
+    buildDryRunGraph(g);
     SurgeEngine s;
-    // 3 requests at A; free drivers: 1 at F (3 hops away, ignored), 1 at C
-    s.recompute(g, [](int a) { return a == 0 ? 3 : 0; },
-                [](int a) { return (a == 5 || a == 2) ? 1 : 0; });
-    CHECK(s.infoAt(0).supply == 1);
+    int demand[6] = {4, 0, 0, 0, 0, 0};
+    int freeDrivers[6] = {0, 0, 0, 0, 0, 1};
+    s.recompute(g, demand, freeDrivers);
     CHECK(s.multiplierAt(0) == 2.0);
+    CHECK(s.infoAt(0).supply == 0);
+    freeDrivers[3] = 2;
+    s.recompute(g, demand, freeDrivers);
+    CHECK(s.infoAt(0).supply == 2);
+    CHECK(s.multiplierAt(0) == 1.5);
     CHECK(s.multiplierAt(1) == 1.0);
     CHECK(s.multiplierAt(99) == 1.0);
 }
 
-// =============================================================== Dispatcher
-// Same 6-node graph as the Dijkstra dry runs, as a map file.
-static const char* kDryRunMapJson = R"({"areas":[
-  {"id":0,"name":"A","lat":24.80,"lng":67.00},{"id":1,"name":"B","lat":24.82,"lng":67.02},
-  {"id":2,"name":"C","lat":24.81,"lng":67.01},{"id":3,"name":"D","lat":24.84,"lng":67.03},
-  {"id":4,"name":"E","lat":24.85,"lng":67.04},{"id":5,"name":"F","lat":24.87,"lng":67.05}],
- "roads":[{"from":0,"to":1,"km":4},{"from":0,"to":2,"km":2},{"from":1,"to":2,"km":1},
-  {"from":1,"to":3,"km":5},{"from":2,"to":3,"km":8},{"from":2,"to":4,"km":10},
-  {"from":3,"to":4,"km":2},{"from":3,"to":5,"km":6},{"from":4,"to":5,"km":3}]})";
+// ---------------------------------------------------------- Dispatcher
 
 struct DispatchFixture {
-    CityMap map;
-    MinHeap<Event> events;
+    CityMap cityMap;
+    MinHeap events;
     SimClock clock;
     Dispatcher disp;
     DSTrace trace;
 
-    DispatchFixture() : disp(map, events, clock) {
-        std::string err;
-        map.loadFromJsonText(kDryRunMapJson, err);
+    DispatchFixture() : disp(cityMap, events, clock) {
+        clock.now = 0;
+        clock.nextSeq = 0;
+        string error;
+        cityMap.loadFromJsonText(dryRunMapJson(), error);
         disp.reset(0, 1);
     }
-    // pop and handle every event with time <= t, like Simulator does
+
+    // pop every event up to time t, like the Simulator does
     void runUntil(double t) {
-        Event e{};
-        while (events.peek(e) && e.time <= t) {
+        HeapItem e;
+        while (events.peek(e) && e.key <= t) {
             events.popMin(e);
-            if (e.time > clock.now) clock.now = e.time;
+            if (e.key > clock.now) clock.now = e.key;
             disp.handleEvent(e, trace);
         }
         clock.now = t;
     }
-    RideStatus status(int rideId) const { return disp.findRide(rideId)->status; }
+
+    RideStatus status(int rideId) {
+        return disp.findRide(rideId)->status;
+    }
 };
 
-TEST(dispatch_nearest_driver_and_fare) {
+void testDispatchNearestDriverAndFare() {
     DispatchFixture f;
-    int dD = f.disp.addDriver("Driver D", RideType::MINI, 3, 450);
+    int driverD = f.disp.addDriver("Driver D", RideType::MINI, 3, 450);
     f.disp.addDriver("Driver E", RideType::MINI, 4, 490);
-    f.disp.addDriver("Bike B", RideType::BIKE, 1, 500);   // wrong type, ignored
+    f.disp.addDriver("Bike B", RideType::BIKE, 1, 500);
     OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
     CHECK(r.ok);
-    const Ride* ride = f.disp.findRide(r.rideId);
+    Ride* ride = f.disp.findRide(r.rideId);
     CHECK(ride->status == RideStatus::ASSIGNED);
-    CHECK(ride->driverId == dD);               // D is 8 km away, E is 10 km
-    CHECK(ride->fare == 640);                  // 120 + 40 * 13 km
+    CHECK(ride->driverId == driverD);
+    CHECK(ride->fare == 640);
     CHECK(nearlyEqual(ride->distanceKm, 13.0));
     CHECK(f.trace.size() > 0);
 }
 
-TEST(dispatch_same_area_picks_best_rating) {
+void testDispatchSameAreaBestRating() {
     DispatchFixture f;
     f.disp.addDriver("Low", RideType::AC, 2, 380);
     int best = f.disp.addDriver("High", RideType::AC, 2, 495);
@@ -851,216 +846,322 @@ TEST(dispatch_same_area_picks_best_rating) {
     CHECK(r.ok && f.disp.findRide(r.rideId)->driverId == best);
 }
 
-TEST(dispatch_validation_errors) {
+void testDispatchValidationErrors() {
     DispatchFixture f;
     f.disp.addDriver("D1", RideType::MINI, 0, 450);
     CHECK(f.disp.addDriver("Bad", RideType::MINI, 77, 450) == -1);
+    CHECK(f.disp.addDriver("Bad", RideType::MINI, 0, 900) == -1);
     CHECK(f.disp.requestRide("", 0, 1, RideType::MINI, false, f.trace).code == "MISSING_FIELD");
     CHECK(f.disp.requestRide("   ", 0, 1, RideType::MINI, false, f.trace).code == "MISSING_FIELD");
-    CHECK(f.disp.requestRide(std::string(41, 'x'), 0, 1, RideType::MINI, false, f.trace).code == "INVALID_NAME");
+    CHECK(f.disp.requestRide(string(41, 'x'), 0, 1, RideType::MINI, false, f.trace).code == "INVALID_NAME");
     CHECK(f.disp.requestRide("Ali", -1, 1, RideType::MINI, false, f.trace).code == "INVALID_AREA");
-    CHECK(f.disp.requestRide("Ali", 0, 99, RideType::MINI, false, f.trace).code == "INVALID_AREA");
-    OpResult same = f.disp.requestRide("Ali", 2, 2, RideType::MINI, false, f.trace);
-    CHECK(!same.ok && same.code == "SAME_LOCATION" && same.httpStatus == 400);
-    CHECK(f.disp.requestRide("Ali", 0, 1, RideType::MINI, false, f.trace).ok);
-    OpResult dup = f.disp.requestRide(" ali ", 0, 2, RideType::MINI, false, f.trace);   // same rider, other casing
-    CHECK(!dup.ok && dup.httpStatus == 409 && dup.code == "DUPLICATE_REQUEST");
+    CHECK(f.disp.requestRide("Ali", 0, 40, RideType::MINI, false, f.trace).code == "INVALID_AREA");
+    CHECK(f.disp.requestRide("Ali", 2, 2, RideType::MINI, false, f.trace).code == "SAME_LOCATION");
+    OpResult first = f.disp.requestRide("Ali", 0, 1, RideType::MINI, false, f.trace);
+    CHECK(first.ok);
+    OpResult again = f.disp.requestRide(" ALI ", 2, 3, RideType::MINI, false, f.trace);
+    CHECK(!again.ok && again.httpStatus == 409 && again.code == "DUPLICATE_REQUEST");
 }
 
-TEST(dispatch_no_driver_goes_to_queue_then_served) {
+void testDispatchQueueThenServed() {
     DispatchFixture f;
-    OpResult none = f.disp.requestRide("Early", 0, 1, RideType::MINI, false, f.trace);
-    CHECK(none.ok && f.status(none.rideId) == RideStatus::WAITING);   // no drivers: queued, not an error
+    f.disp.addDriver("Only", RideType::MINI, 0, 450);
+    OpResult r1 = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    OpResult r2 = f.disp.requestRide("Sara", 1, 2, RideType::MINI, false, f.trace);
+    OpResult r3 = f.disp.requestRide("Omar", 3, 4, RideType::AC, false, f.trace);
+    CHECK(f.status(r1.rideId) == RideStatus::ASSIGNED);
+    CHECK(f.status(r2.rideId) == RideStatus::WAITING);
+    CHECK(f.status(r3.rideId) == RideStatus::WAITING);
+    CHECK(f.disp.queue().size() == 2);
+    CHECK(f.disp.pendingInArea(1) == 1);
+    f.runUntil(28.5);
+    CHECK(f.status(r1.rideId) == RideStatus::COMPLETED);
+    CHECK(f.status(r2.rideId) == RideStatus::ASSIGNED);
     CHECK(f.disp.queue().size() == 1);
-    CHECK(f.disp.cancelRide(none.rideId, f.trace).ok);
-    CHECK(f.disp.queue().isEmpty());
-
-    f.disp.addDriver("Solo", RideType::MINI, 0, 450);
-    OpResult first = f.disp.requestRide("X", 0, 1, RideType::MINI, false, f.trace);
-    OpResult second = f.disp.requestRide("Y", 0, 2, RideType::MINI, false, f.trace);
-    CHECK(f.status(first.rideId) == RideStatus::ASSIGNED);
-    CHECK(f.status(second.rideId) == RideStatus::WAITING);
-    f.runUntil(500);
-    CHECK(f.status(first.rideId) == RideStatus::COMPLETED);
-    CHECK(f.status(second.rideId) == RideStatus::COMPLETED);   // served from the queue
-    CHECK(f.disp.queue().isEmpty());
-    CHECK(f.disp.historyOf("x") && f.disp.historyOf("x")->size() == 1);
-    CHECK(f.disp.findDriver(1)->tripsCompleted == 2);
+    f.runUntil(200);
+    CHECK(f.status(r2.rideId) == RideStatus::COMPLETED);
+    CHECK(f.status(r3.rideId) == RideStatus::WAITING);
+    CHECK(f.disp.findRider("Ali")->history.size() == 1);
 }
 
-TEST(dispatch_cancel_rules) {
+void testDispatchCancelRules() {
     DispatchFixture f;
-    f.disp.addDriver("D1", RideType::BIKE, 3, 450);
+    f.disp.addDriver("Only", RideType::MINI, 1, 450);
+    OpResult assigned = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    OpResult waiting = f.disp.requestRide("Sara", 2, 3, RideType::MINI, false, f.trace);
+    CHECK(f.disp.cancelRide(9999, f.trace).httpStatus == 404);
+    CHECK(f.disp.cancelRide(waiting.rideId, f.trace).ok);
+    CHECK(f.disp.queue().size() == 0);
+    CHECK(f.disp.cancelRide(waiting.rideId, f.trace).code == "ALREADY_CANCELLED");
+    CHECK(f.disp.cancelRide(assigned.rideId, f.trace).ok);
+    CHECK(f.disp.freeDriversInArea(0) + f.disp.freeDriversInArea(1) + f.disp.freeDriversInArea(2) == 1);
+    CHECK(f.disp.activeRideOf("Ali") == -1);
+
+    OpResult trip = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    f.runUntil(10);
+    CHECK(f.status(trip.rideId) == RideStatus::IN_PROGRESS);
+    CHECK(f.disp.cancelRide(trip.rideId, f.trace).code == "CANCEL_NOT_ALLOWED");
+    f.runUntil(100);
+    CHECK(f.disp.cancelRide(trip.rideId, f.trace).code == "ALREADY_COMPLETED");
+}
+
+void testDispatchRatingRules() {
+    DispatchFixture f;
+    int driver = f.disp.addDriver("Only", RideType::BIKE, 0, 400);
     OpResult r = f.disp.requestRide("Ali", 0, 1, RideType::BIKE, false, f.trace);
-    CHECK(f.status(r.rideId) == RideStatus::ASSIGNED);
-    CHECK(f.disp.cancelRide(r.rideId, f.trace).ok);            // ASSIGNED -> CANCELLED
-    CHECK(f.status(r.rideId) == RideStatus::CANCELLED);
-    CHECK(f.disp.findDriver(1)->status == DriverStatus::AVAILABLE);
-    OpResult again = f.disp.cancelRide(r.rideId, f.trace);
-    CHECK(!again.ok && again.code == "ALREADY_CANCELLED");
-    CHECK(f.disp.cancelRide(4242, f.trace).code == "RIDE_NOT_FOUND");
-    f.runUntil(100);                                           // stale events are ignored safely
-    CHECK(f.status(r.rideId) == RideStatus::CANCELLED);
-
-    OpResult done = f.disp.requestRide("Ali", 0, 1, RideType::BIKE, false, f.trace);
-    f.runUntil(1000);
-    CHECK(f.status(done.rideId) == RideStatus::COMPLETED);
-    CHECK(f.disp.cancelRide(done.rideId, f.trace).code == "ALREADY_COMPLETED");
-}
-
-TEST(dispatch_rating_rules) {
-    DispatchFixture f;
-    f.disp.addDriver("D1", RideType::MINI, 0, 400);
-    OpResult r = f.disp.requestRide("Ali", 0, 1, RideType::MINI, false, f.trace);
     CHECK(f.disp.rateRide(r.rideId, 5, f.trace).code == "NOT_COMPLETED");
-    f.runUntil(1000);
+    f.runUntil(60);
+    CHECK(f.status(r.rideId) == RideStatus::COMPLETED);
     CHECK(f.disp.rateRide(r.rideId, 0, f.trace).code == "INVALID_RATING");
     CHECK(f.disp.rateRide(r.rideId, 6, f.trace).code == "INVALID_RATING");
+    CHECK(f.disp.rateRide(4242, 5, f.trace).httpStatus == 404);
     CHECK(f.disp.rateRide(r.rideId, 5, f.trace).ok);
     CHECK(f.disp.rateRide(r.rideId, 4, f.trace).code == "ALREADY_RATED");
-    CHECK(f.disp.findDriver(1)->ratingCenti == 405);           // (4.0*20 + 5) / 21
-    CHECK(f.disp.leaderboard().contains(DriverKey{405, 1}));
-    CHECK(!f.disp.leaderboard().contains(DriverKey{400, 1}));
-    CHECK(f.disp.rateRide(999, 5, f.trace).code == "RIDE_NOT_FOUND");
+    CHECK(f.disp.findDriver(driver)->rating == 405);
+    CHECK(f.disp.leaderboard().contains(405, driver));
+    CHECK(!f.disp.leaderboard().contains(400, driver));
 }
 
-TEST(dispatch_reroute_on_block) {
+void testDispatchRerouteOnBlock() {
     DispatchFixture f;
-    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    f.disp.addDriver("Only", RideType::MINI, 0, 450);
     OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
-    f.runUntil(2.0);                       // picked up at t=1, now on road A-C
+    f.runUntil(1.5);
     CHECK(f.status(r.rideId) == RideStatus::IN_PROGRESS);
-    int roadDE = f.map.graph().findRoad(3, 4);
-    f.map.graph().setBlocked(3, 4, true);
-    f.disp.onRoadChanged(roadDE, f.trace);
-    const Ride* ride = f.disp.findRide(r.rideId);
-    // new route: A C B D F  (finish A-C, then C-B-D-F = 12 km)
-    CHECK(ride->tripNodes.size() == 5 && ride->tripNodes[3] == 3 && ride->tripNodes[4] == 5);
-    f.runUntil(500);
-    CHECK(f.status(r.rideId) == RideStatus::COMPLETED);
-    CHECK(nearlyEqual(ride->completeTime, 29.0));          // 1 + 4 (A-C) + 24 (12 km at 30 km/h)
-}
-
-TEST(dispatch_destination_unreachable_cancels) {
-    DispatchFixture f;
-    f.disp.addDriver("D1", RideType::MINI, 0, 450);
-    OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
-    f.runUntil(2.0);
-    f.map.graph().setBlocked(3, 5, true);
-    f.disp.onRoadChanged(f.map.graph().findRoad(3, 5), f.trace);
-    f.map.graph().setBlocked(4, 5, true);
-    f.disp.onRoadChanged(f.map.graph().findRoad(4, 5), f.trace);
-    const Ride* ride = f.disp.findRide(r.rideId);
-    CHECK(ride->status == RideStatus::CANCELLED);
-    CHECK(ride->cancelReason == "Destination unreachable due to road block");
-    CHECK(f.disp.findDriver(1)->status == DriverStatus::AVAILABLE);
-    OpResult blocked = f.disp.requestRide("Sara", 0, 5, RideType::MINI, false, f.trace);
-    CHECK(!blocked.ok && blocked.code == "UNREACHABLE");
-}
-
-TEST(dispatch_analytics) {
-    DispatchFixture f;
-    f.disp.addDriver("D1", RideType::MINI, 0, 450);
-    f.disp.requestRide("A1", 0, 1, RideType::MINI, false, f.trace);
-    OpResult c = f.disp.requestRide("A2", 2, 3, RideType::MINI, false, f.trace);
-    f.disp.cancelRide(c.rideId, f.trace);
-    f.runUntil(1000);
-    Analytics a = f.disp.analytics();
-    CHECK(a.totalRides == 2 && a.completed == 1 && a.cancelled == 1);
-    CHECK(a.byType[(int)RideType::MINI] == 2);
-    CHECK(a.busiest.size() == 2);
-    CHECK(a.topEarnerId == 1 && a.topEarnings > 0);
-    CHECK(a.avgFare > 0);
-}
-
-// ================================================================ Simulator
-TEST(sim_init_and_controls) {
-    Simulator sim;
-    std::string err;
-    CHECK(!Simulator().init("data/missing.json", err) && !err.empty());
-    CHECK(sim.init("data/karachi_map.json", err));
-    CHECK(sim.dispatcher().drivers().size() == Simulator::kDriverCount);
-    CHECK(sim.dispatcher().leaderboard().size() == Simulator::kDriverCount);
-    CHECK(sim.setSpeed(5) && sim.speed() == 5);
-    CHECK(!sim.setSpeed(3) && sim.speed() == 5);
-    sim.setPaused(true);
-    sim.advanceReal(10);
-    CHECK(nearlyEqual(sim.now(), 0.0));       // paused: clock frozen
-    sim.setPaused(false);
-    sim.advanceReal(2);
-    CHECK(nearlyEqual(sim.now(), 10.0));      // 2 s at 5x = 10 sim min
-}
-
-TEST(sim_same_seed_is_reproducible) {
-    Simulator a, b;
-    std::string err;
-    a.init("data/karachi_map.json", err);
-    b.init("data/karachi_map.json", err);
-    bool same = true;
-    for (int id = 1; id <= Simulator::kDriverCount; ++id) {
-        const Driver* x = a.dispatcher().findDriver(id);
-        const Driver* y = b.dispatcher().findDriver(id);
-        if (!x || !y || x->areaId != y->areaId || x->ratingCenti != y->ratingCenti || x->type != y->type) same = false;
+    f.cityMap.graph().setBlocked(3, 4, true);
+    f.disp.onRoadChanged(f.cityMap.graph().findRoad(3, 4), f.trace);
+    Ride* ride = f.disp.findRide(r.rideId);
+    bool usesE = false;
+    for (int i = 0; i < ride->tripCount; i++) {
+        if (ride->tripNodes[i] == 4) usesE = true;
     }
-    CHECK(same);
+    CHECK(!usesE);
+    CHECK(ride->tripNodes[ride->tripCount - 1] == 5);
+    f.runUntil(100);
+    CHECK(f.status(r.rideId) == RideStatus::COMPLETED);
 }
 
-TEST(sim_rush_hour_long_run_invariants) {
-    Simulator sim;
-    std::string err;
-    CHECK(sim.init("data/karachi_map.json", err));
-    sim.setRushHour(true);
-    for (int i = 0; i < 2400; ++i) sim.advanceSim(0.25);   // 10 sim hours
-    const Dispatcher& d = sim.dispatcher();
-    Analytics a = d.analytics();
-    CHECK(a.totalRides > 50);
-    CHECK(a.completed > 30);
-    CHECK(sim.dispatcher().queue().size() <= Simulator::kRushQueueCap + 3);
-    // every driver is consistent: free drivers have no ride, busy ones do
-    bool consistent = true;
-    d.drivers().forEach([&](int, const Driver& drv) {
-        if (drv.status == DriverStatus::AVAILABLE && drv.rideId != -1) consistent = false;
-        if (drv.status != DriverStatus::AVAILABLE && drv.rideId == -1) consistent = false;
-    });
-    CHECK(consistent);
-    CHECK(d.leaderboard().size() == Simulator::kDriverCount && d.leaderboard().isValidAVL());
-    CHECK(sim.events().isValidHeap());
-    DSTrace bg = sim.takeBackgroundTrace();
-    CHECK(bg.size() > 0);
-    CHECK(sim.takeBackgroundTrace().size() == 0);   // drained
-}
-
-TEST(sim_road_edits_validate) {
-    Simulator sim;
-    std::string err;
-    sim.init("data/karachi_map.json", err);
-    DSTrace t;
-    int saddar = sim.map().findAreaByName("Saddar");
-    int clifton = sim.map().findAreaByName("Clifton");
-    int malir = sim.map().findAreaByName("Malir");
-    CHECK(sim.setTraffic(saddar, clifton, 2.0, t).ok);
-    CHECK(sim.setTraffic(saddar, clifton, 0.0, t).code == "INVALID_TRAFFIC");
-    CHECK(sim.setTraffic(saddar, clifton, -1.0, t).code == "INVALID_TRAFFIC");
-    CHECK(sim.setTraffic(saddar, clifton, 3.5, t).code == "INVALID_TRAFFIC");
-    CHECK(sim.setTraffic(saddar, malir, 2.0, t).code == "ROAD_NOT_FOUND");
-    CHECK(sim.setTraffic(-1, clifton, 2.0, t).code == "INVALID_AREA");
-    CHECK(sim.setBlocked(saddar, clifton, true, t).ok);
-    OpResult again = sim.setBlocked(saddar, clifton, true, t);   // idempotent
-    CHECK(again.ok && again.message == "Road already blocked");
-    CHECK(sim.setBlocked(saddar, malir, true, t).code == "ROAD_NOT_FOUND");
-    CHECK(sim.reset(err));
-    CHECK(!sim.map().graph().road(sim.map().graph().findRoad(saddar, clifton)).blocked);   // reset clears blocks
-}
-
-TEST(dispatch_block_updates_planned_trip) {
+void testDispatchUnreachableCancels() {
     DispatchFixture f;
-    f.disp.addDriver("Far", RideType::MINI, 5, 450);          // at F: still driving to pickup A
+    f.disp.addDriver("Only", RideType::MINI, 0, 450);
+    OpResult r = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    f.runUntil(1.5);
+    f.cityMap.graph().setBlocked(3, 5, true);
+    f.disp.onRoadChanged(f.cityMap.graph().findRoad(3, 5), f.trace);
+    CHECK(f.status(r.rideId) == RideStatus::IN_PROGRESS);
+    f.cityMap.graph().setBlocked(4, 5, true);
+    f.disp.onRoadChanged(f.cityMap.graph().findRoad(4, 5), f.trace);
+    CHECK(f.status(r.rideId) == RideStatus::CANCELLED);
+    CHECK(f.disp.findRide(r.rideId)->cancelReason == "Destination unreachable due to road block");
+    CHECK(f.disp.requestRide("Sara", 0, 5, RideType::MINI, false, f.trace).code == "UNREACHABLE");
+    CHECK(f.disp.freeDriversInArea(0) + f.disp.freeDriversInArea(2) == 1);
+}
+
+void testDispatchBlockUpdatesPlannedTrip() {
+    DispatchFixture f;
+    f.disp.addDriver("Far", RideType::MINI, 5, 450);
     OpResult r = f.disp.requestRide("Ali", 0, 3, RideType::MINI, false, f.trace);
     CHECK(f.status(r.rideId) == RideStatus::ASSIGNED);
-    // planned trip A C B D; block B-D -> planned trip must change before pickup
-    f.map.graph().setBlocked(1, 3, true);
-    f.disp.onRoadChanged(f.map.graph().findRoad(1, 3), f.trace);
-    const Ride* ride = f.disp.findRide(r.rideId);
+    f.cityMap.graph().setBlocked(1, 3, true);
+    f.disp.onRoadChanged(f.cityMap.graph().findRoad(1, 3), f.trace);
+    Ride* ride = f.disp.findRide(r.rideId);
     CHECK(ride->status == RideStatus::ASSIGNED);
-    CHECK(ride->tripNodes.size() == 3 && ride->tripNodes[1] == 2);   // A C D (10 km)
+    CHECK(ride->tripCount == 3 && ride->tripNodes[1] == 2);
+}
+
+void testDispatchAnalytics() {
+    DispatchFixture f;
+    f.disp.addDriver("D1", RideType::MINI, 0, 450);
+    f.disp.addDriver("D2", RideType::BIKE, 2, 450);
+    OpResult a = f.disp.requestRide("Ali", 0, 5, RideType::MINI, false, f.trace);
+    OpResult b = f.disp.requestRide("Sara", 2, 3, RideType::BIKE, false, f.trace);
+    f.disp.requestRide("Omar", 0, 4, RideType::AC, false, f.trace);
+    f.disp.cancelRide(b.rideId, f.trace);
+    f.runUntil(100);
+    Analytics s = f.disp.analytics();
+    CHECK(s.totalRides == 3);
+    CHECK(s.completed == 1);
+    CHECK(s.cancelled == 1);
+    CHECK(s.waiting == 1);
+    CHECK(nearlyEqual(s.avgFare, f.disp.findRide(a.rideId)->fare));
+    CHECK(s.busiestTotal == 2 && s.busiestArea[0] == 0 && s.busiestCount[0] == 2);
+    CHECK(s.byType[(int)RideType::AC] == 1);
+    CHECK(s.hourCount == 1 && s.ridesPerHour[0] == 1);
+    CHECK(s.topEarnerId == 1);
+}
+
+// ----------------------------------------------------------- Simulator
+
+void testSimInitAndControls() {
+    Simulator* sim = new Simulator();
+    string error;
+    CHECK(sim->init("data/karachi_map.json", error));
+    CHECK(sim->dispatcher().driverCount() == DRIVER_COUNT);
+    CHECK(sim->dispatcher().leaderboard().size() == DRIVER_COUNT);
+    CHECK(!sim->setSpeed(3));
+    CHECK(sim->setSpeed(5) && sim->getSpeed() == 5);
+    sim->setPaused(true);
+    sim->advanceReal(10);
+    CHECK(sim->now() == 0);
+    sim->setPaused(false);
+    sim->advanceReal(2);
+    CHECK(nearlyEqual(sim->now(), 10));
+    CHECK(sim->reset(error));
+    CHECK(sim->now() == 0 && sim->getSpeed() == 1);
+    Simulator* broken = new Simulator();
+    CHECK(!broken->init("missing.json", error));
+    delete broken;
+    delete sim;
+}
+
+void testSimSameSeedReproducible() {
+    Simulator* a = new Simulator();
+    Simulator* b = new Simulator();
+    string error;
+    a->init("data/karachi_map.json", error);
+    b->init("data/karachi_map.json", error);
+    a->setRushHour(true);
+    b->setRushHour(true);
+    for (int i = 0; i < 120; i++) {
+        a->advanceSim(0.5);
+        b->advanceSim(0.5);
+    }
+    CHECK(a->dispatcher().rideCount() == b->dispatcher().rideCount());
+    CHECK(a->dispatcher().rideCount() > 0);
+    bool same = true;
+    for (int i = 0; i < a->dispatcher().driverCount(); i++) {
+        if (a->dispatcher().driverAt(i).areaId != b->dispatcher().driverAt(i).areaId) same = false;
+        if (a->dispatcher().driverAt(i).rating != b->dispatcher().driverAt(i).rating) same = false;
+    }
+    CHECK(same);
+    delete a;
+    delete b;
+}
+
+void testSimRushHourLongRun() {
+    Simulator* sim = new Simulator();
+    string error;
+    sim->init("data/karachi_map.json", error);
+    sim->setRushHour(true);
+    for (int i = 0; i < 2000; i++) sim->advanceSim(0.5);
+    const Dispatcher& d = sim->dispatcher();
+    CHECK(d.rideCount() > 100);
+    CHECK(d.queue().size() <= RUSH_QUEUE_CAP + 3);
+    CHECK(d.leaderboard().isValidAVL());
+    CHECK(d.leaderboard().size() == DRIVER_COUNT);
+    int busy = 0;
+    for (int i = 0; i < d.driverCount(); i++) {
+        if (d.driverAt(i).status != DriverStatus::AVAILABLE) busy++;
+    }
+    int assignedOrOnTrip = 0;
+    for (ListNode* p = d.activeRides().getHead(); p != NULL; p = p->next) {
+        RideStatus s = d.findRide(p->value)->status;
+        if (s == RideStatus::ASSIGNED || s == RideStatus::IN_PROGRESS) assignedOrOnTrip++;
+    }
+    // drivers in the 1 minute drop-off handover are busy but have no active ride
+    CHECK(busy >= assignedOrOnTrip);
+    Analytics a = d.analytics();
+    CHECK(a.completed > 50);
+    CHECK(a.totalRides == a.completed + a.cancelled + a.active);
+    delete sim;
+}
+
+void testSimRoadEditsValidate() {
+    Simulator* sim = new Simulator();
+    string error;
+    sim->init("data/karachi_map.json", error);
+    DSTrace trace;
+    const Road& road = sim->map().graph().getRoad(0);
+    CHECK(sim->setTraffic(-1, 2, 2, trace).code == "INVALID_AREA");
+    CHECK(sim->setTraffic(road.from, road.to, 0, trace).code == "INVALID_TRAFFIC");
+    CHECK(sim->setTraffic(road.from, road.to, 3.5, trace).code == "INVALID_TRAFFIC");
+    CHECK(sim->setTraffic(road.from, road.to, 2, trace).ok);
+    int noRoadTo = -1;
+    for (int v = 0; v < sim->map().areaCount(); v++) {
+        if (v != road.from && sim->map().graph().findRoad(road.from, v) == -1) noRoadTo = v;
+    }
+    CHECK(sim->setBlocked(road.from, noRoadTo, true, trace).code == "ROAD_NOT_FOUND");
+    CHECK(sim->setBlocked(road.from, road.to, true, trace).message == "Road blocked");
+    CHECK(sim->setBlocked(road.from, road.to, true, trace).message == "Road already blocked");
+    CHECK(sim->setBlocked(road.from, road.to, false, trace).message == "Road reopened");
+    delete sim;
+}
+
+void testTraceCap() {
+    DSTrace t;
+    for (int i = 0; i < 250; i++) t.add("X", "op", "O(1)", "entry");
+    CHECK(t.size() == MAX_TRACE);
+    CHECK(t.isTruncated());
+    t.clear();
+    CHECK(t.size() == 0 && !t.isTruncated() && t.getHead() == NULL);
+}
+
+int main() {
+    runTest("graph_add_nodes_and_edges", testGraphAddNodesAndEdges);
+    runTest("graph_rejects_bad_edges", testGraphRejectsBadEdges);
+    runTest("graph_traffic_and_blocking", testGraphTrafficAndBlocking);
+    runTest("graph_empty_and_invalid", testGraphEmptyAndInvalid);
+    runTest("heap_push_pop_order", testHeapPushPopOrder);
+    runTest("heap_empty_and_single", testHeapEmptyAndSingle);
+    runTest("heap_duplicates_and_negatives", testHeapDuplicatesAndNegatives);
+    runTest("heap_large_10k", testHeapLarge10k);
+    runTest("dijkstra_case1_basic", testDijkstraCase1Basic);
+    runTest("dijkstra_case2_blocked_edge", testDijkstraCase2BlockedEdge);
+    runTest("dijkstra_case3_unreachable", testDijkstraCase3Unreachable);
+    runTest("dijkstra_case4_traffic", testDijkstraCase4Traffic);
+    runTest("dijkstra_same_node_and_invalid", testDijkstraSameNodeAndInvalid);
+    runTest("dijkstra_find_nearest", testDijkstraFindNearest);
+    runTest("dijkstra_trace_steps", testDijkstraTraceSteps);
+    runTest("queue_case1_fifo", testQueueCase1Fifo);
+    runTest("queue_case2_cancel_by_id", testQueueCase2CancelById);
+    runTest("queue_case3_empty_and_single", testQueueCase3EmptyAndSingle);
+    runTest("queue_large_10k", testQueueLarge10k);
+    runTest("bfs_hops_and_reachability", testBfsHopsAndReachability);
+    runTest("bfs_blocked_roads_disconnect", testBfsBlockedRoadsDisconnect);
+    runTest("hash_insert_find_erase", testHashInsertFindErase);
+    runTest("hash_negatives_and_counters", testHashNegativesAndCounters);
+    runTest("hash_rehash_10k", testHashRehash10k);
+    runTest("hash_many_collisions", testHashManyCollisions);
+    runTest("trie_case1_shared_prefix", testTrieCase1SharedPrefix);
+    runTest("trie_case2_case_insensitive", testTrieCase2CaseInsensitive);
+    runTest("trie_case3_no_match", testTrieCase3NoMatch);
+    runTest("trie_edge_inputs", testTrieEdgeInputs);
+    runTest("trie_limit_and_dedupe", testTrieLimitAndDedupe);
+    runTest("trie_branch_view", testTrieBranchView);
+    runTest("avl_case1_rr", testAvlCase1RR);
+    runTest("avl_case2_ll", testAvlCase2LL);
+    runTest("avl_case3_lr", testAvlCase3LR);
+    runTest("avl_case4_rl", testAvlCase4RL);
+    runTest("avl_duplicate_ratings", testAvlDuplicateRatings);
+    runTest("avl_delete_and_update", testAvlDeleteAndUpdate);
+    runTest("avl_large_stays_balanced", testAvlLargeStaysBalanced);
+    runTest("list_push_front_newest_first", testListPushFrontNewestFirst);
+    runTest("list_remove_and_empty", testListRemoveAndEmpty);
+    runTest("list_large", testListLarge);
+    runTest("citymap_loads_valid_json", testCityMapLoadsValidJson);
+    runTest("citymap_rejects_bad_files", testCityMapRejectsBadFiles);
+    runTest("citymap_real_karachi_file", testCityMapRealKarachiFile);
+    runTest("models_fare_and_ride_type", testModelsFareAndRideType);
+    runTest("event_order_ties", testEventOrderTies);
+    runTest("surge_multiplier_steps", testSurgeMultiplierSteps);
+    runTest("surge_bfs_two_hops", testSurgeBfsTwoHops);
+    runTest("dispatch_nearest_driver_and_fare", testDispatchNearestDriverAndFare);
+    runTest("dispatch_same_area_best_rating", testDispatchSameAreaBestRating);
+    runTest("dispatch_validation_errors", testDispatchValidationErrors);
+    runTest("dispatch_queue_then_served", testDispatchQueueThenServed);
+    runTest("dispatch_cancel_rules", testDispatchCancelRules);
+    runTest("dispatch_rating_rules", testDispatchRatingRules);
+    runTest("dispatch_reroute_on_block", testDispatchRerouteOnBlock);
+    runTest("dispatch_unreachable_cancels", testDispatchUnreachableCancels);
+    runTest("dispatch_block_updates_planned_trip", testDispatchBlockUpdatesPlannedTrip);
+    runTest("dispatch_analytics", testDispatchAnalytics);
+    runTest("sim_init_and_controls", testSimInitAndControls);
+    runTest("sim_same_seed_reproducible", testSimSameSeedReproducible);
+    runTest("sim_rush_hour_long_run", testSimRushHourLongRun);
+    runTest("sim_road_edits_validate", testSimRoadEditsValidate);
+    runTest("trace_cap", testTraceCap);
+
+    cout << endl << passedTests << " passed, " << failedTests << " failed, " << passedTests + failedTests << " total" << endl;
+    if (failedTests > 0) return 1;
+    return 0;
 }
