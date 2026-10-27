@@ -87,6 +87,8 @@ class Autocomplete {
   pick(i) {
     const s = this.items[i];
     if (!s) return;
+    clearTimeout(this.timer);   // a pending keystroke search must not reopen the list
+    this.seq++;
     this.input.value = s.name;
     this.close();
     this.onPick(s.id);
