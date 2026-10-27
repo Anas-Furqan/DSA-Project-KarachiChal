@@ -1,106 +1,160 @@
 #include "core/Simulator.h"
 
-Simulator::Simulator() : dispatcher_(map_, events_, clock_), rng_(kSeed) {}
+using namespace std;
 
-bool Simulator::init(const std::string& mapPath, std::string& error) {
-    mapPath_ = mapPath;
+Simulator::Simulator() : rides(cityMap, eventHeap, simClock), rng(SIM_SEED) {
+    simClock.now = 0;
+    simClock.nextSeq = 0;
+    paused = false;
+    speed = 1;
+    rushHour = false;
+    nextSpawnAt = 0;
+    rushRiderCounter = 0;
+}
+
+bool Simulator::init(string mapFile, string& error) {
+    mapPath = mapFile;
     return reset(error);
 }
 
-bool Simulator::reset(std::string& error) {
-    if (!map_.loadFromFile(mapPath_, error)) return false;
-    events_.clear();
-    clock_ = SimClock();
-    rng_.seed(kSeed);
-    paused_ = false;
-    speed_ = 1;
-    rushHour_ = false;
-    nextSpawnAt_ = 0.0;
-    rushRiderCounter_ = 0;
-    background_.clear();
-    dispatcher_.reset(kDriverCount, kSeed);
-    dispatcher_.recomputeSurge(nullptr);
+bool Simulator::reset(string& error) {
+    if (!cityMap.loadFromFile(mapPath, error)) return false;
+    eventHeap.clear();
+    simClock.now = 0;
+    simClock.nextSeq = 0;
+    rng.seed(SIM_SEED);
+    paused = false;
+    speed = 1;
+    rushHour = false;
+    nextSpawnAt = 0;
+    rushRiderCounter = 0;
+    background.clear();
+    rides.reset(DRIVER_COUNT, SIM_SEED);
+    rides.recomputeSurge(NULL);
     return true;
+}
+
+void Simulator::setPaused(bool p) {
+    paused = p;
+}
+
+bool Simulator::isPaused() const {
+    return paused;
 }
 
 bool Simulator::setSpeed(int s) {
     if (s != 1 && s != 2 && s != 5) return false;
-    speed_ = s;
+    speed = s;
     return true;
 }
 
+int Simulator::getSpeed() const {
+    return speed;
+}
+
 void Simulator::setRushHour(bool on) {
-    if (on && !rushHour_) nextSpawnAt_ = clock_.now;   // first burst right away
-    rushHour_ = on;
+    if (on && !rushHour) nextSpawnAt = simClock.now;
+    rushHour = on;
+}
+
+bool Simulator::isRushHour() const {
+    return rushHour;
 }
 
 void Simulator::advanceReal(double realSeconds) {
-    if (paused_ || realSeconds <= 0) return;
-    advanceSim(realSeconds * speed_);   // 1 real s = 1 sim min at 1x
+    if (paused || realSeconds <= 0) return;
+    advanceSim(realSeconds * speed);
 }
 
+// handle every event whose time is up, in time order
 void Simulator::advanceSim(double minutes) {
     if (minutes <= 0) return;
-    double target = clock_.now + minutes;
-    Event e{};
-    while (events_.peek(e) && e.time <= target) {
-        events_.popMin(e);
-        if (e.time > clock_.now) clock_.now = e.time;
-        dispatcher_.handleEvent(e, background_);
+    double target = simClock.now + minutes;
+    HeapItem e;
+    while (eventHeap.peek(e) && e.key <= target) {
+        eventHeap.popMin(e);
+        if (e.key > simClock.now) simClock.now = e.key;
+        rides.handleEvent(e, background);
     }
-    clock_.now = target;
-    if (rushHour_ && clock_.now >= nextSpawnAt_) {
+    simClock.now = target;
+    if (rushHour && simClock.now >= nextSpawnAt) {
         spawnRushHourRequests();
-        nextSpawnAt_ = clock_.now + kRushSpawnEveryMin;
+        nextSpawnAt = simClock.now + RUSH_SPAWN_EVERY_MIN;
     }
-    dispatcher_.recomputeSurge(nullptr);
+    rides.recomputeSurge(NULL);
 }
 
 void Simulator::spawnRushHourRequests() {
-    int areas = map_.areaCount();
-    if (areas < 2 || dispatcher_.queue().size() >= kRushQueueCap) return;
-    int count = 1 + (int)(rng_() % 3);
-    for (int i = 0; i < count; ++i) {
-        int pickup = (int)(rng_() % (unsigned)areas);
-        int drop = (int)(rng_() % (unsigned)(areas - 1));
-        if (drop >= pickup) ++drop;   // never equal to pickup
-        RideType type = (RideType)(rng_() % kRideTypeCount);
-        std::string name = "Rider " + std::to_string(++rushRiderCounter_);
-        dispatcher_.requestRide(name, pickup, drop, type, true, background_);
+    int areas = cityMap.areaCount();
+    if (areas < 2 || rides.queue().size() >= RUSH_QUEUE_CAP) return;
+    int count = 1 + (int)(rng() % 3);
+    for (int i = 0; i < count; i++) {
+        int pickup = (int)(rng() % (unsigned)areas);
+        int drop = (int)(rng() % (unsigned)(areas - 1));
+        if (drop >= pickup) drop++;
+        RideType type = (RideType)(rng() % RIDE_TYPE_COUNT);
+        rushRiderCounter++;
+        string name = "Rider " + to_string(rushRiderCounter);
+        rides.requestRide(name, pickup, drop, type, true, background);
     }
 }
 
 OpResult Simulator::setTraffic(int from, int to, double factor, DSTrace& trace) {
-    Graph& g = map_.graph();
-    if (!g.isValidNode(from) || !g.isValidNode(to)) return OpResult::fail(400, "INVALID_AREA", "Unknown area id");
-    if (!(factor >= 1.0 && factor <= 3.0))
-        return OpResult::fail(400, "INVALID_TRAFFIC", "Traffic factor must be between 1 and 3");
+    Graph& g = cityMap.graph();
+    if (!g.isValidNode(from) || !g.isValidNode(to)) return errorResult(400, "INVALID_AREA", "Unknown area id");
+    if (!(factor >= 1.0 && factor <= 3.0)) {
+        return errorResult(400, "INVALID_TRAFFIC", "Traffic factor must be between 1 and 3");
+    }
     int road = g.findRoad(from, to);
-    trace.add("Graph", "findRoad", "O(deg)", map_.areaName(from) + " - " + map_.areaName(to) + (road == -1 ? ": no road" : ": found"));
-    if (road == -1) return OpResult::fail(404, "ROAD_NOT_FOUND", "No road between these areas");
+    string label = cityMap.areaName(from) + " - " + cityMap.areaName(to);
+    trace.add("Graph", "findRoad", "O(deg)", label + (road == -1 ? ": no road" : ": found"));
+    if (road == -1) return errorResult(404, "ROAD_NOT_FOUND", "No road between these areas");
     g.setTraffic(from, to, factor);
-    trace.add("Graph", "setTraffic", "O(deg)", "Traffic x" + DSTrace::num(factor, 1) + " on " + map_.areaName(from) + " - " + map_.areaName(to));
-    dispatcher_.onRoadChanged(road, trace);
-    return OpResult::success(-1, "Traffic updated");
+    trace.add("Graph", "setTraffic", "O(deg)", "Traffic x" + DSTrace::num(factor, 1) + " on " + label);
+    rides.onRoadChanged(road, trace);
+    return okResult(-1, "Traffic updated");
 }
 
 OpResult Simulator::setBlocked(int from, int to, bool blocked, DSTrace& trace) {
-    Graph& g = map_.graph();
-    if (!g.isValidNode(from) || !g.isValidNode(to)) return OpResult::fail(400, "INVALID_AREA", "Unknown area id");
+    Graph& g = cityMap.graph();
+    if (!g.isValidNode(from) || !g.isValidNode(to)) return errorResult(400, "INVALID_AREA", "Unknown area id");
     int road = g.findRoad(from, to);
-    trace.add("Graph", "findRoad", "O(deg)", map_.areaName(from) + " - " + map_.areaName(to) + (road == -1 ? ": no road" : ": found"));
-    if (road == -1) return OpResult::fail(404, "ROAD_NOT_FOUND", "No road between these areas");
-    if (g.road(road).blocked == blocked)   // idempotent: nothing to re-route
-        return OpResult::success(-1, blocked ? "Road already blocked" : "Road already open");
+    string label = cityMap.areaName(from) + " - " + cityMap.areaName(to);
+    trace.add("Graph", "findRoad", "O(deg)", label + (road == -1 ? ": no road" : ": found"));
+    if (road == -1) return errorResult(404, "ROAD_NOT_FOUND", "No road between these areas");
+    if (g.getRoad(road).blocked == blocked) {
+        return okResult(-1, blocked ? "Road already blocked" : "Road already open");
+    }
     g.setBlocked(from, to, blocked);
-    trace.add("Graph", blocked ? "blockEdge" : "unblockEdge", "O(deg)",
-              map_.areaName(from) + " - " + map_.areaName(to) + (blocked ? " blocked" : " reopened"));
-    dispatcher_.onRoadChanged(road, trace);
-    return OpResult::success(-1, blocked ? "Road blocked" : "Road reopened");
+    trace.add("Graph", blocked ? "blockEdge" : "unblockEdge", "O(deg)", label + (blocked ? " blocked" : " reopened"));
+    rides.onRoadChanged(road, trace);
+    return okResult(-1, blocked ? "Road blocked" : "Road reopened");
 }
 
-DSTrace Simulator::takeBackgroundTrace() {
-    DSTrace out = background_;
-    background_.clear();
-    return out;
+double Simulator::now() const {
+    return simClock.now;
+}
+
+CityMap& Simulator::map() {
+    return cityMap;
+}
+
+const CityMap& Simulator::map() const {
+    return cityMap;
+}
+
+Dispatcher& Simulator::dispatcher() {
+    return rides;
+}
+
+const Dispatcher& Simulator::dispatcher() const {
+    return rides;
+}
+
+const MinHeap& Simulator::events() const {
+    return eventHeap;
+}
+
+DSTrace& Simulator::backgroundTrace() {
+    return background;
 }

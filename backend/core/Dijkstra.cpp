@@ -1,161 +1,223 @@
 #include "core/Dijkstra.h"
 
-#include "ds/MinHeap.h"
+using namespace std;
 
-namespace {
+const double INF = 1e18;
 
-const double kInf = 1e18;
-
-struct SearchState {
-    std::vector<double> dist;
-    std::vector<int> prevNode;
-    std::vector<int> prevRoad;
-    std::vector<bool> settled;
-};
-
-std::string km(double d) { return d >= kInf ? "∞" : DSTrace::num(d, 1); }
-
-double exportDist(double d) { return d >= kInf ? -1.0 : d; }
-
-std::vector<double> exportDistTable(const SearchState& st) {
-    std::vector<double> out;
-    for (double d : st.dist) out.push_back(exportDist(d));
-    return out;
+static string kmText(double d) {
+    if (d >= INF) return "∞";
+    return DSTrace::num(d, 1);
 }
 
-// O(path length): follow prev pointers back from dst, then reverse in place.
-PathResult buildPath(const SearchState& st, int src, int dst) {
-    PathResult r;
-    if (st.dist[dst] >= kInf) return r;
-    r.found = true;
-    r.distance = st.dist[dst];
-    for (int v = dst; v != -1; v = st.prevNode[v]) {
-        r.nodes.push_back(v);
-        if (st.prevRoad[v] != -1) r.roads.push_back(st.prevRoad[v]);
+PathResult emptyPath() {
+    PathResult p;
+    p.found = false;
+    p.distance = 0;
+    p.nodeCount = 0;
+    return p;
+}
+
+DijkstraTrace::DijkstraTrace() {
+    steps = NULL;
+    stepCount = 0;
+    capacity = 0;
+    result = emptyPath();
+}
+
+DijkstraTrace::~DijkstraTrace() {
+    for (int i = 0; i < stepCount; i++) delete[] steps[i].heap;
+    delete[] steps;
+}
+
+void DijkstraTrace::init(int maxSteps) {
+    steps = new DijkstraStep[maxSteps];
+    capacity = maxSteps;
+    stepCount = 0;
+}
+
+void Dijkstra::saveStep(DijkstraStep* step, const MinHeap& heap, double dist[], int n) {
+    step->heapCount = heap.size();
+    step->heap = new HeapItem[heap.size() + 1];
+    for (int i = 0; i < heap.size(); i++) step->heap[i] = heap.itemAt(i);
+    for (int i = 0; i < n; i++) step->dist[i] = dist[i] >= INF ? -1 : dist[i];
+}
+
+// follow prev links back from dst, then reverse
+PathResult Dijkstra::buildPath(int src, int dst, double dist[], int prevNode[], int prevRoad[]) {
+    PathResult p = emptyPath();
+    if (dist[dst] >= INF) return p;
+    p.found = true;
+    p.distance = dist[dst];
+
+    int backNodes[MAX_ROUTE];
+    int backRoads[MAX_ROUTE];
+    int n = 0;
+    int v = dst;
+    while (v != -1 && n < MAX_ROUTE) {
+        backNodes[n] = v;
+        backRoads[n] = prevRoad[v];
+        n++;
         if (v == src) break;
+        v = prevNode[v];
     }
-    for (int i = 0, j = (int)r.nodes.size() - 1; i < j; ++i, --j) {
-        int t = r.nodes[i]; r.nodes[i] = r.nodes[j]; r.nodes[j] = t;
-    }
-    for (int i = 0, j = (int)r.roads.size() - 1; i < j; ++i, --j) {
-        int t = r.roads[i]; r.roads[i] = r.roads[j]; r.roads[j] = t;
-    }
-    return r;
+    for (int i = 0; i < n; i++) p.nodes[i] = backNodes[n - 1 - i];
+    for (int i = 0; i < n - 1; i++) p.roads[i] = backRoads[n - 2 - i];
+    p.nodeCount = n;
+    return p;
 }
 
-// Core loop shared by every public entry point.
-// Returns the first popped node satisfying isTarget, or -1.
-int runSearch(const Graph& g, int src, const std::function<bool(int)>& isTarget,
-              SearchState& st, DSTrace* trace, DijkstraTrace* rec) {
+// dst >= 0: stop at dst. dst == -1: stop at the first area with a free driver of this type.
+int Dijkstra::search(const Graph& g, int src, int dst, const HashTable* freeCount, RideType type,
+                     double dist[], int prevNode[], int prevRoad[], DSTrace* trace, DijkstraTrace* rec) {
     int n = g.nodeCount();
-    st.dist.assign(n, kInf);
-    st.prevNode.assign(n, -1);
-    st.prevRoad.assign(n, -1);
-    st.settled.assign(n, false);
+    bool settled[MAX_NODES];
+    for (int i = 0; i < n; i++) {
+        dist[i] = INF;
+        prevNode[i] = -1;
+        prevRoad[i] = -1;
+        settled[i] = false;
+    }
 
-    MinHeap<HeapItem> heap;
-    st.dist[src] = 0.0;
-    heap.push(HeapItem{0.0, src});
-    if (trace) trace->add("MinHeap", "push", "O(log n)", "Start at " + g.node(src).name + " (0.0 km)");
+    MinHeap heap;
+    dist[src] = 0;
+    heap.push(makeHeapItem(0, src, src));
+    if (trace) trace->add("MinHeap", "push", "O(log n)", "Start at " + g.getNode(src).name + " (0.0 km)");
 
-    HeapItem cur{0.0, 0};
+    HeapItem cur;
     while (heap.popMin(cur)) {
-        DijkstraStep step;
-        step.popped = cur.node;
-        step.poppedDist = cur.dist;
-        step.stale = false;
+        int u = cur.value;
+        string uName = g.getNode(u).name;
 
-        const std::string& curName = g.node(cur.node).name;
-        if (st.settled[cur.node] || cur.dist > st.dist[cur.node]) {
-            if (trace) trace->add("MinHeap", "popMin", "O(log n)", "Skipped stale entry " + curName + " (" + km(cur.dist) + " km)");
-            if (rec) {
-                step.stale = true;
-                step.heap = heap.snapshot();
-                step.dist = exportDistTable(st);
-                step.explanation = "Popped " + curName + " (" + km(cur.dist) + " km) — stale entry, already settled at " + km(st.dist[cur.node]) + " km. Skip.";
-                rec->steps.push_back(step);
+        DijkstraStep* step = NULL;
+        if (rec != NULL && rec->stepCount < rec->capacity) {
+            step = &rec->steps[rec->stepCount];
+            rec->stepCount++;
+            step->popped = u;
+            step->poppedDist = cur.key;
+            step->stale = false;
+            step->relaxCount = 0;
+            step->heap = NULL;
+            step->heapCount = 0;
+        }
+
+        if (settled[u] || cur.key > dist[u]) {
+            if (trace) trace->add("MinHeap", "popMin", "O(log n)", "Skipped stale entry " + uName + " (" + kmText(cur.key) + " km)");
+            if (step != NULL) {
+                step->stale = true;
+                step->explanation = "Popped " + uName + " (" + kmText(cur.key) + " km) — stale entry, already settled at " +
+                                    kmText(dist[u]) + " km. Skip.";
+                saveStep(step, heap, dist, n);
             }
             continue;
         }
-        st.settled[cur.node] = true;
-        if (trace) trace->add("MinHeap", "popMin", "O(log n)", "Popped " + curName + " (dist " + km(cur.dist) + " km)");
-        step.explanation = "Popped " + curName + " (" + km(cur.dist) + " km).";
+        settled[u] = true;
+        if (trace) trace->add("MinHeap", "popMin", "O(log n)", "Popped " + uName + " (dist " + kmText(cur.key) + " km)");
+        string text = "Popped " + uName + " (" + kmText(cur.key) + " km).";
 
-        if (isTarget(cur.node)) {
-            if (rec) {
-                step.heap = heap.snapshot();
-                step.dist = exportDistTable(st);
-                step.explanation += " Target reached — stop.";
-                rec->steps.push_back(step);
+        bool isTarget = false;
+        if (dst >= 0) {
+            isTarget = (u == dst);
+        } else {
+            isTarget = freeCount->get(freeKey(u, type)) > 0;
+            if (trace) {
+                trace->add("HashTable", "find", "O(1) avg",
+                           "Free " + rideTypeName(type) + " at " + uName + "? " + (isTarget ? "yes" : "no"));
             }
-            return cur.node;
+        }
+        if (isTarget) {
+            if (step != NULL) {
+                step->explanation = text + " Target reached — stop.";
+                saveStep(step, heap, dist, n);
+            }
+            return u;
         }
 
-        if (trace) trace->add("Graph", "neighbors", "O(deg)", "Scan " + std::to_string(g.neighbors(cur.node).size()) + " roads of " + curName);
-        std::string relaxText;
-        for (const AdjEntry& e : g.neighbors(cur.node)) {
-            int v = e.neighbor;
-            if (st.settled[v]) continue;
-            if (!g.isUsable(e.roadId)) {
-                if (trace) trace->add("Graph", "skipBlocked", "O(1)", "Road " + curName + " - " + g.node(v).name + " is blocked");
+        if (trace) trace->add("Graph", "neighbors", "O(deg)", "Scan " + to_string(g.degree(u)) + " roads of " + uName);
+        string relaxText = "";
+        for (EdgeNode* e = g.neighbors(u); e != NULL; e = e->next) {
+            int v = e->to;
+            if (settled[v]) continue;
+            if (!g.isUsable(e->roadId)) {
+                if (trace) trace->add("Graph", "skipBlocked", "O(1)", "Road " + uName + " - " + g.getNode(v).name + " is blocked");
                 continue;
             }
-            double nd = cur.dist + g.effectiveWeight(e.roadId);
-            if (nd < st.dist[v] - 1e-9) {
-                double old = st.dist[v];
-                st.dist[v] = nd;
-                st.prevNode[v] = cur.node;
-                st.prevRoad[v] = e.roadId;
-                heap.push(HeapItem{nd, v});
-                if (trace) trace->add("MinHeap", "push", "O(log n)", "Relaxed " + g.node(v).name + ": " + km(old) + " → " + km(nd));
-                step.relaxed.push_back(DijkstraRelax{cur.node, v, exportDist(old), nd});
-                relaxText += (relaxText.empty() ? " Relaxed " : ", ") + g.node(v).name + ": " + km(old) + " → " + km(nd);
+            double newDist = cur.key + g.effectiveWeight(e->roadId);
+            if (newDist < dist[v] - 1e-9) {
+                double oldDist = dist[v];
+                dist[v] = newDist;
+                prevNode[v] = u;
+                prevRoad[v] = e->roadId;
+                heap.push(makeHeapItem(newDist, v, v));
+                if (trace) {
+                    trace->add("MinHeap", "push", "O(log n)",
+                               "Relaxed " + g.getNode(v).name + ": " + kmText(oldDist) + " → " + kmText(newDist));
+                }
+                if (step != NULL && step->relaxCount < MAX_NODES) {
+                    RelaxInfo& r = step->relaxed[step->relaxCount];
+                    r.from = u;
+                    r.to = v;
+                    r.oldDist = oldDist >= INF ? -1 : oldDist;
+                    r.newDist = newDist;
+                    step->relaxCount++;
+                }
+                if (relaxText.empty()) {
+                    relaxText = " Relaxed ";
+                } else {
+                    relaxText += ", ";
+                }
+                relaxText += g.getNode(v).name + ": " + kmText(oldDist) + " → " + kmText(newDist);
             }
         }
-        if (rec) {
-            step.explanation += relaxText.empty() ? " No distance improved." : relaxText + ".";
-            step.heap = heap.snapshot();
-            step.dist = exportDistTable(st);
-            rec->steps.push_back(step);
+        if (step != NULL) {
+            if (relaxText.empty()) {
+                step->explanation = text + " No distance improved.";
+            } else {
+                step->explanation = text + relaxText + ".";
+            }
+            saveStep(step, heap, dist, n);
         }
     }
     return -1;
 }
 
-}  // namespace
-
 PathResult Dijkstra::shortestPath(const Graph& g, int src, int dst, DSTrace* trace) {
-    if (!g.isValidNode(src) || !g.isValidNode(dst)) return PathResult();
-    SearchState st;
-    std::function<bool(int)> isDst = [dst](int u) { return u == dst; };
-    if (runSearch(g, src, isDst, st, trace, nullptr) == -1) {
-        if (trace) trace->add("Dijkstra", "result", "O((V+E) log V)", g.node(dst).name + " is unreachable");
-        return PathResult();
+    if (!g.isValidNode(src) || !g.isValidNode(dst)) return emptyPath();
+    double dist[MAX_NODES];
+    int prevNode[MAX_NODES];
+    int prevRoad[MAX_NODES];
+    int hit = search(g, src, dst, NULL, RideType::MINI, dist, prevNode, prevRoad, trace, NULL);
+    if (hit == -1) {
+        if (trace) trace->add("Dijkstra", "result", "O((V+E) log V)", g.getNode(dst).name + " is unreachable");
+        return emptyPath();
     }
-    PathResult r = buildPath(st, src, dst);
-    if (trace) trace->add("Dijkstra", "result", "O((V+E) log V)",
-                          g.node(src).name + " → " + g.node(dst).name + " = " + km(r.distance) + " km, " +
-                              std::to_string(r.nodes.size()) + " areas");
-    return r;
+    PathResult p = buildPath(src, dst, dist, prevNode, prevRoad);
+    if (trace) {
+        trace->add("Dijkstra", "result", "O((V+E) log V)",
+                   g.getNode(src).name + " → " + g.getNode(dst).name + " = " + kmText(p.distance) + " km, " +
+                       to_string(p.nodeCount) + " areas");
+    }
+    return p;
 }
 
-NearestResult Dijkstra::findNearest(const Graph& g, int src, const std::function<bool(int)>& isTarget,
-                                    DSTrace* trace) {
-    NearestResult res;
-    if (!g.isValidNode(src)) return res;
-    SearchState st;
-    int hit = runSearch(g, src, isTarget, st, trace, nullptr);
-    if (hit == -1) return res;
-    res.node = hit;
-    res.path = buildPath(st, src, hit);
-    return res;
+PathResult Dijkstra::findNearest(const Graph& g, int src, const HashTable& freeCount, RideType type,
+                                 int& foundNode, DSTrace* trace) {
+    foundNode = -1;
+    if (!g.isValidNode(src)) return emptyPath();
+    double dist[MAX_NODES];
+    int prevNode[MAX_NODES];
+    int prevRoad[MAX_NODES];
+    int hit = search(g, src, -1, &freeCount, type, dist, prevNode, prevRoad, trace, NULL);
+    if (hit == -1) return emptyPath();
+    foundNode = hit;
+    return buildPath(src, hit, dist, prevNode, prevRoad);
 }
 
-DijkstraTrace Dijkstra::traceSteps(const Graph& g, int src, int dst) {
-    DijkstraTrace rec;
-    if (!g.isValidNode(src) || !g.isValidNode(dst)) return rec;
-    SearchState st;
-    std::function<bool(int)> isDst = [dst](int u) { return u == dst; };
-    if (runSearch(g, src, isDst, st, nullptr, &rec) != -1) rec.result = buildPath(st, src, dst);
-    return rec;
+void Dijkstra::traceSteps(const Graph& g, int src, int dst, DijkstraTrace& out) {
+    if (!g.isValidNode(src) || !g.isValidNode(dst)) return;
+    out.init(2 * g.roadCount() + 2);
+    double dist[MAX_NODES];
+    int prevNode[MAX_NODES];
+    int prevRoad[MAX_NODES];
+    int hit = search(g, src, dst, NULL, RideType::MINI, dist, prevNode, prevRoad, NULL, &out);
+    if (hit != -1) out.result = buildPath(src, dst, dist, prevNode, prevRoad);
 }

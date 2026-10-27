@@ -1,179 +1,88 @@
 #pragma once
-#include <cmath>
 #include <string>
-#include <vector>
 
 #include "ds/Graph.h"
+#include "ds/LinkedList.h"
 
-/*
- * Models — plain data records shared by the dispatcher, simulator and API.
- * No behaviour beyond tiny helpers (string conversion, fare formula).
- *
- * Areas and roads live inside the Graph (GraphNode / Road), so `Area` is an
- * alias. All times are simulation minutes since the simulation started.
- */
+using namespace std;
 
-using Area = GraphNode;
+const int RIDE_TYPE_COUNT = 3;
+const int MAX_DRIVERS = 100;
 
-enum class RideType { BIKE = 0, MINI = 1, AC = 2 };
-const int kRideTypeCount = 3;
-
+enum class RideType { BIKE, MINI, AC };
 enum class DriverStatus { AVAILABLE, TO_PICKUP, ON_TRIP };
 enum class RideStatus { WAITING, ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED };
 enum class EventType { DRIVER_ARRIVED_PICKUP, RIDE_COMPLETED, DRIVER_FREE };
 
-// ------------------------------------------------------------------ strings
-inline const char* toString(RideType t) {
-    switch (t) {
-        case RideType::BIKE: return "BIKE";
-        case RideType::MINI: return "MINI";
-        default: return "AC";
-    }
-}
+string rideTypeName(RideType t);
+bool parseRideType(string text, RideType& out);
+string driverStatusName(DriverStatus s);
+string rideStatusName(RideStatus s);
+string eventTypeName(EventType e);
+int computeFare(RideType t, double km, double surge);
+string freeKey(int area, RideType t);
 
-// O(L). Case-insensitive; false for anything other than BIKE / MINI / AC.
-inline bool parseRideType(const std::string& raw, RideType& out) {
-    std::string s;
-    for (char c : raw) s += (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
-    if (s == "BIKE") out = RideType::BIKE;
-    else if (s == "MINI") out = RideType::MINI;
-    else if (s == "AC") out = RideType::AC;
-    else return false;
-    return true;
-}
-
-inline const char* toString(DriverStatus s) {
-    switch (s) {
-        case DriverStatus::AVAILABLE: return "AVAILABLE";
-        case DriverStatus::TO_PICKUP: return "TO_PICKUP";
-        default: return "ON_TRIP";
-    }
-}
-
-inline const char* toString(RideStatus s) {
-    switch (s) {
-        case RideStatus::WAITING: return "WAITING";
-        case RideStatus::ASSIGNED: return "ASSIGNED";
-        case RideStatus::IN_PROGRESS: return "IN_PROGRESS";
-        case RideStatus::COMPLETED: return "COMPLETED";
-        default: return "CANCELLED";
-    }
-}
-
-inline const char* toString(EventType e) {
-    switch (e) {
-        case EventType::DRIVER_ARRIVED_PICKUP: return "DRIVER_ARRIVED_PICKUP";
-        case EventType::RIDE_COMPLETED: return "RIDE_COMPLETED";
-        default: return "DRIVER_FREE";
-    }
-}
-
-// --------------------------------------------------------------------- fare
-struct FareRate {
-    double base;
-    double perKm;
-};
-
-inline FareRate fareRate(RideType t) {
-    switch (t) {
-        case RideType::BIKE: return FareRate{60, 25};
-        case RideType::MINI: return FareRate{120, 40};
-        default: return FareRate{180, 55};
-    }
-}
-
-// O(1): (base + perKm * km) * surge, rounded to whole rupees.
-inline int computeFare(RideType t, double km, double surge) {
-    FareRate r = fareRate(t);
-    return (int)std::lround((r.base + r.perKm * km) * surge);
-}
-
-// ------------------------------------------------------------------ records
-
-// A driver's route through time. Leg i goes nodes[i] -> nodes[i+1] over
-// roads[i] between legStart[i] and legEnd[i] (sim minutes). Position at any
-// time is a linear interpolation along the current leg.
+// Leg i goes nodes[i] -> nodes[i+1] between legStart[i] and legEnd[i] (sim minutes).
 struct Motion {
-    std::vector<int> nodes;
-    std::vector<int> roads;
-    std::vector<double> legStart;
-    std::vector<double> legEnd;
+    int nodes[MAX_ROUTE];
+    int roads[MAX_ROUTE];
+    double legStart[MAX_ROUTE];
+    double legEnd[MAX_ROUTE];
+    int legCount;
 
-    bool active() const { return !roads.empty(); }
-    double endTime() const { return legEnd.empty() ? 0.0 : legEnd.back(); }
-    void clear() {
-        nodes.clear();
-        roads.clear();
-        legStart.clear();
-        legEnd.clear();
-    }
-    // O(legs): index of the leg in progress at time t (clamped).
-    int legAt(double t) const {
-        for (int i = 0; i < (int)legEnd.size(); ++i)
-            if (t < legEnd[i]) return i;
-        return (int)legEnd.size() - 1;
-    }
+    bool active() const;
+    double endTime() const;
+    int legAt(double t) const;
+    void clear();
 };
 
 struct Driver {
-    int id = 0;
-    std::string name;
-    RideType type = RideType::MINI;
-    double ratingSum = 0.0;
-    int ratingCount = 0;
-    int ratingCenti = 0;          // round(avg * 100), the AVL key
-    int areaId = 0;               // last node reached
-    DriverStatus status = DriverStatus::AVAILABLE;
-    int rideId = -1;
+    int id;
+    string name;
+    RideType type;
+    double ratingSum;
+    int ratingCount;
+    int rating;
+    int areaId;
+    DriverStatus status;
+    int rideId;
     Motion motion;
-    double earnings = 0.0;
-    int tripsCompleted = 0;
+    double earnings;
+    int tripsCompleted;
 };
 
 struct Ride {
-    int id = 0;
-    std::string riderName;
-    int pickup = 0;
-    int drop = 0;
-    RideType type = RideType::MINI;
-    RideStatus status = RideStatus::WAITING;
-    int driverId = -1;
-    double distanceKm = 0.0;      // trip length at booking time
-    double surge = 1.0;
-    int fare = 0;
-    double requestTime = 0.0;
-    double assignTime = -1.0;
-    double pickupTime = -1.0;
-    double completeTime = -1.0;
-    double endTime = -1.0;        // completed or cancelled
-    double etaPickup = -1.0;      // sim time the driver should arrive
-    std::vector<int> tripNodes;   // pickup ... drop
-    std::string cancelReason;
-    int rating = 0;               // 0 = not rated yet
-    bool autoGenerated = false;   // created by the rush-hour generator
-    int eventVersion = 0;         // events with an older version are stale
-};
-
-struct Event {
-    double time;
-    EventType type;
-    int rideId;
-    int version;
-    long long seq;                // insertion order, breaks time ties
-
-    bool operator<(const Event& o) const {
-        if (time != o.time) return time < o.time;
-        return seq < o.seq;
-    }
-};
-
-// What the waiting queue stores. `id` is the ride id (used by removeById).
-struct PendingRequest {
     int id;
+    string riderName;
     int pickup;
+    int drop;
+    RideType type;
+    RideStatus status;
+    int driverId;
+    double distanceKm;
+    double surge;
+    int fare;
+    double requestTime;
+    double assignTime;
+    double pickupTime;
+    double completeTime;
+    double endTime;
+    double etaPickup;
+    int tripNodes[MAX_ROUTE];
+    int tripCount;
+    string cancelReason;
+    int rating;
+    bool autoGenerated;
+    int eventVersion;
+};
+
+struct Rider {
+    string name;
+    int activeRideId;
+    LinkedList history;
 };
 
 struct SimClock {
-    double now = 0.0;             // sim minutes
-    long long nextSeq = 0;
+    double now;
+    long long nextSeq;
 };

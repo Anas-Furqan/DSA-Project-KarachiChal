@@ -1,151 +1,237 @@
 #include "core/Dispatcher.h"
+#include <cmath>
 
 #include "core/BFS.h"
 
-namespace {
+using namespace std;
 
-const char* kFirstNames[] = {"Ahmed", "Bilal", "Faisal", "Hamza", "Imran", "Junaid", "Kashif", "Usman",
+const char* FIRST_NAMES[] = {"Ahmed", "Bilal", "Faisal", "Hamza", "Imran", "Junaid", "Kashif", "Usman",
                              "Naveed", "Owais", "Qasim", "Rizwan", "Salman", "Tariq", "Waqas", "Yasir",
                              "Zeeshan", "Adeel", "Danish", "Fahad", "Haris", "Irfan", "Kamran", "Moiz",
                              "Nadeem", "Rehan", "Sajid", "Taimoor", "Umair", "Zubair"};
-const char* kLastInitials = "AKMRSZHQ";
+const int FIRST_NAME_COUNT = 30;
+const char* LAST_INITIALS = "AKMRSZHQ";
 
-// Reverse a path in place: Dijkstra from the pickup gives pickup -> driver,
-// the car needs driver -> pickup. Roads are undirected so weights are equal.
-PathResult reversed(const PathResult& p) {
+static string rideTag(int id) {
+    return "ride #" + to_string(id);
+}
+
+// Dijkstra from the pickup gives pickup -> driver, the car needs driver -> pickup
+static PathResult reversePath(const PathResult& p) {
     PathResult r = p;
-    for (int i = 0, j = (int)r.nodes.size() - 1; i < j; ++i, --j) {
-        int t = r.nodes[i]; r.nodes[i] = r.nodes[j]; r.nodes[j] = t;
-    }
-    for (int i = 0, j = (int)r.roads.size() - 1; i < j; ++i, --j) {
-        int t = r.roads[i]; r.roads[i] = r.roads[j]; r.roads[j] = t;
-    }
+    for (int i = 0; i < p.nodeCount; i++) r.nodes[i] = p.nodes[p.nodeCount - 1 - i];
+    for (int i = 0; i < p.nodeCount - 1; i++) r.roads[i] = p.roads[p.nodeCount - 2 - i];
     return r;
 }
 
-std::string rideTag(int id) { return "ride #" + std::to_string(id); }
+OpResult okResult(int rideId, string message) {
+    OpResult r;
+    r.ok = true;
+    r.httpStatus = 200;
+    r.code = "";
+    r.message = message;
+    r.rideId = rideId;
+    return r;
+}
 
-}  // namespace
+OpResult errorResult(int httpStatus, string code, string message) {
+    OpResult r;
+    r.ok = false;
+    r.httpStatus = httpStatus;
+    r.code = code;
+    r.message = message;
+    r.rideId = -1;
+    return r;
+}
 
-Dispatcher::Dispatcher(CityMap& map, MinHeap<Event>& events, SimClock& clock)
-    : map_(map), events_(events), clock_(clock), rng_(42) {}
+Dispatcher::Dispatcher(CityMap& mapRef, MinHeap& eventsRef, SimClock& clockRef)
+    : cityMap(mapRef), eventHeap(eventsRef), simClock(clockRef), rng(42) {
+    drivers = new Driver[MAX_DRIVERS];
+    numDrivers = 0;
+    rideCapacity = 64;
+    rides = new Ride*[rideCapacity];
+    numRides = 0;
+    riderCapacity = 64;
+    riders = new Rider*[riderCapacity];
+    numRiders = 0;
+    nextRideId = 1001;
+}
 
-// ------------------------------------------------------------------ setup
+Dispatcher::~Dispatcher() {
+    freeRecords();
+    delete[] rides;
+    delete[] riders;
+    delete[] drivers;
+}
 
-void Dispatcher::reset(int driverCount, unsigned seed) {
-    rng_.seed(seed);
-    drivers_.clear();
-    rides_.clear();
-    activeRides_.clear();
-    freeIndex_.clear();
-    activeByRider_.clear();
-    history_.clear();
-    pendingPerArea_.clear();
-    requestsPerArea_.clear();
-    queue_.clear();
-    leaderboard_.clear();
-    lastRotations_.clear();
-    surge_.reset(map_.areaCount());
-    nextRideId_ = 1001;
-    nextDriverId_ = 1;
-    if (map_.areaCount() == 0) return;
+void Dispatcher::freeRecords() {
+    for (int i = 0; i < numRides; i++) delete rides[i];
+    for (int i = 0; i < numRiders; i++) delete riders[i];
+    numRides = 0;
+    numRiders = 0;
+}
 
-    const int nameCount = (int)(sizeof(kFirstNames) / sizeof(kFirstNames[0]));
-    for (int i = 0; i < driverCount; ++i) {
-        std::string name = std::string(kFirstNames[rng_() % nameCount]) + " " + kLastInitials[rng_() % 8] + ".";
-        RideType type = (RideType)(rng_() % kRideTypeCount);
-        int area = (int)(rng_() % (unsigned)map_.areaCount());
-        int ratingCenti = 350 + (int)(rng_() % 151);   // 3.50 .. 5.00
-        addDriver(name, type, area, ratingCenti);
+void Dispatcher::reset(int driverTotal, unsigned seed) {
+    rng.seed(seed);
+    freeRecords();
+    numDrivers = 0;
+    driverIndex.clear();
+    rideIndex.clear();
+    riderIndex.clear();
+    freeCount.clear();
+    pendingPerArea.clear();
+    requestsPerArea.clear();
+    active.clear();
+    waiting.clear();
+    ratings.clear();
+    surgeEngine.reset(cityMap.areaCount());
+    nextRideId = 1001;
+    if (cityMap.areaCount() == 0) return;
+
+    for (int i = 0; i < driverTotal; i++) {
+        string name = string(FIRST_NAMES[rng() % FIRST_NAME_COUNT]) + " " + LAST_INITIALS[rng() % 8] + ".";
+        RideType type = (RideType)(rng() % RIDE_TYPE_COUNT);
+        int area = (int)(rng() % (unsigned)cityMap.areaCount());
+        int rating = 350 + (int)(rng() % 151);
+        addDriver(name, type, area, rating);
     }
 }
 
-int Dispatcher::addDriver(const std::string& name, RideType type, int area, int ratingCenti) {
-    if (!map_.isValidArea(area) || ratingCenti < 100 || ratingCenti > 500) return -1;
-    Driver d;
-    d.id = nextDriverId_++;
+int Dispatcher::addDriver(string name, RideType type, int area, int rating) {
+    if (!cityMap.isValidArea(area) || rating < 100 || rating > 500) return -1;
+    if (numDrivers >= MAX_DRIVERS) return -1;
+    Driver& d = drivers[numDrivers];
+    d.id = numDrivers + 1;
     d.name = name;
     d.type = type;
     d.areaId = area;
-    d.ratingCount = 20;   // prior weight so one new rating moves the average gently
-    d.ratingSum = ratingCenti / 100.0 * d.ratingCount;
-    d.ratingCenti = ratingCenti;
-    drivers_.insert(d.id, d);
-    addFree(d, nullptr);
-    leaderboard_.insert(DriverKey{d.ratingCenti, d.id});
+    // start with 20 ratings worth of weight so one new rating moves the average gently
+    d.ratingCount = 20;
+    d.ratingSum = rating / 100.0 * d.ratingCount;
+    d.rating = rating;
+    d.status = DriverStatus::AVAILABLE;
+    d.rideId = -1;
+    d.motion.clear();
+    d.earnings = 0;
+    d.tripsCompleted = 0;
+    driverIndex.insert(d.id, numDrivers);
+    numDrivers++;
+    addFree(d, NULL);
+    ratings.insert(d.rating, d.id);
     return d.id;
 }
 
-// ---------------------------------------------------------------- helpers
+Ride* Dispatcher::addRide(Ride* r) {
+    if (numRides == rideCapacity) {
+        Ride** bigger = new Ride*[rideCapacity * 2];
+        for (int i = 0; i < numRides; i++) bigger[i] = rides[i];
+        delete[] rides;
+        rides = bigger;
+        rideCapacity = rideCapacity * 2;
+    }
+    rides[numRides] = r;
+    rideIndex.insert(r->id, numRides);
+    numRides++;
+    return r;
+}
+
+Rider* Dispatcher::addRider(string name) {
+    if (numRiders == riderCapacity) {
+        Rider** bigger = new Rider*[riderCapacity * 2];
+        for (int i = 0; i < numRiders; i++) bigger[i] = riders[i];
+        delete[] riders;
+        riders = bigger;
+        riderCapacity = riderCapacity * 2;
+    }
+    Rider* rider = new Rider;
+    rider->name = name;
+    rider->activeRideId = -1;
+    riders[numRiders] = rider;
+    riderIndex.insert(CityMap::normalize(name), numRiders);
+    numRiders++;
+    return rider;
+}
+
+Ride* Dispatcher::findRide(int id) const {
+    int slot = -1;
+    if (!rideIndex.find(id, slot)) return NULL;
+    return rides[slot];
+}
+
+Driver* Dispatcher::findDriver(int id) const {
+    int slot = -1;
+    if (!driverIndex.find(id, slot)) return NULL;
+    return &drivers[slot];
+}
+
+Rider* Dispatcher::findRider(string name) const {
+    int slot = -1;
+    if (!riderIndex.find(CityMap::normalize(name), slot)) return NULL;
+    return riders[slot];
+}
+
+int Dispatcher::activeRideOf(string riderName) const {
+    Rider* rider = findRider(riderName);
+    if (rider == NULL) return -1;
+    return rider->activeRideId;
+}
 
 double Dispatcher::legMinutes(int roadId) const {
-    return map_.graph().effectiveWeight(roadId) / kCarSpeedKmh * 60.0;
+    return cityMap.graph().effectiveWeight(roadId) / CAR_SPEED_KMH * 60.0;
 }
 
 void Dispatcher::addFree(const Driver& d, DSTrace* trace) {
-    freeIndex_.getOrInsert(freeKey(d.areaId, d.type), LinkedList<int>()).pushFront(d.id);
-    if (trace) trace->add("HashTable", "insert", "O(1) avg",
-                          d.name + " free at " + map_.areaName(d.areaId) + " [" + toString(d.type) + "]");
+    freeCount.addTo(freeKey(d.areaId, d.type), 1);
+    if (trace) {
+        trace->add("HashTable", "insert", "O(1) avg",
+                   d.name + " free at " + cityMap.areaName(d.areaId) + " [" + rideTypeName(d.type) + "]");
+    }
 }
 
 void Dispatcher::removeFree(const Driver& d, DSTrace* trace) {
-    LinkedList<int>* list = freeIndex_.find(freeKey(d.areaId, d.type));
-    if (list) list->remove(d.id);
-    if (trace) trace->add("HashTable", "erase", "O(1) avg", d.name + " no longer free at " + map_.areaName(d.areaId));
-}
-
-void Dispatcher::addPending(int area, int delta) {
-    int& count = pendingPerArea_.getOrInsert(area, 0);
-    count += delta;
-    if (count < 0) count = 0;
+    if (freeCount.get(freeKey(d.areaId, d.type)) > 0) freeCount.addTo(freeKey(d.areaId, d.type), -1);
+    if (trace) trace->add("HashTable", "erase", "O(1) avg", d.name + " no longer free at " + cityMap.areaName(d.areaId));
 }
 
 int Dispatcher::freeDriversInArea(int area) const {
     int total = 0;
-    for (int t = 0; t < kRideTypeCount; ++t) {
-        const LinkedList<int>* l = freeIndex_.find(freeKey(area, (RideType)t));
-        if (l) total += l->size();
-    }
+    for (int t = 0; t < RIDE_TYPE_COUNT; t++) total += freeCount.get(freeKey(area, (RideType)t));
     return total;
 }
 
 int Dispatcher::pendingInArea(int area) const {
-    const int* c = pendingPerArea_.find(area);
-    return c ? *c : 0;
-}
-
-int Dispatcher::activeRideOf(const std::string& riderName) const {
-    const int* id = activeByRider_.find(riderKey(riderName));
-    return id ? *id : -1;
-}
-
-const LinkedList<int>* Dispatcher::historyOf(const std::string& riderName) const {
-    return history_.find(riderKey(riderName));
+    return pendingPerArea.get(area);
 }
 
 void Dispatcher::startMotion(Driver& d, const PathResult& path, double start) {
     d.motion.clear();
-    if (path.nodes.empty()) return;
-    d.motion.nodes = path.nodes;
-    d.motion.roads = path.roads;
+    if (path.nodeCount < 2) return;
     double t = start;
-    for (int road : path.roads) {
-        d.motion.legStart.push_back(t);
-        t += legMinutes(road);
-        d.motion.legEnd.push_back(t);
+    for (int i = 0; i < path.nodeCount; i++) d.motion.nodes[i] = path.nodes[i];
+    for (int i = 0; i < path.nodeCount - 1; i++) {
+        d.motion.roads[i] = path.roads[i];
+        d.motion.legStart[i] = t;
+        t += legMinutes(path.roads[i]);
+        d.motion.legEnd[i] = t;
     }
+    d.motion.legCount = path.nodeCount - 1;
 }
 
 void Dispatcher::schedule(EventType type, Ride& r, double time, DSTrace& trace) {
-    events_.push(Event{time, type, r.id, r.eventVersion, clock_.nextSeq++});
+    HeapItem e = makeHeapItem(time, simClock.nextSeq, r.id);
+    simClock.nextSeq++;
+    e.type = (int)type;
+    e.version = r.eventVersion;
+    eventHeap.push(e);
     trace.add("MinHeap", "push", "O(log n)",
-              std::string(toString(type)) + " for " + rideTag(r.id) + " at t=" + DSTrace::num(time, 1) + " min");
+              eventTypeName(type) + " for " + rideTag(r.id) + " at t=" + DSTrace::num(time, 1) + " min");
 }
 
+// the end of the current road that the car is closer to
 int Dispatcher::nearestNode(const Driver& d) const {
     if (!d.motion.active()) return d.areaId;
-    double now = clock_.now;
-    if (now >= d.motion.endTime()) return d.motion.nodes.back();
+    double now = simClock.now;
+    if (now >= d.motion.endTime()) return d.motion.nodes[d.motion.legCount];
     int i = d.motion.legAt(now);
     double span = d.motion.legEnd[i] - d.motion.legStart[i];
     double progress = span > 0 ? (now - d.motion.legStart[i]) / span : 1.0;
@@ -153,23 +239,31 @@ int Dispatcher::nearestNode(const Driver& d) const {
 }
 
 DriverPosition Dispatcher::positionOf(const Driver& d, double t) const {
-    const Graph& g = map_.graph();
+    const Graph& g = cityMap.graph();
+    DriverPosition pos;
     if (!d.motion.active()) {
-        const GraphNode& n = g.node(d.areaId);
-        return DriverPosition{n.lat, n.lng, d.areaId, d.areaId, 0.0};
+        pos.lat = g.getNode(d.areaId).lat;
+        pos.lng = g.getNode(d.areaId).lng;
+        pos.fromNode = d.areaId;
+        pos.toNode = d.areaId;
+        pos.progress = 0;
+        return pos;
     }
     int i = d.motion.legAt(t);
     double span = d.motion.legEnd[i] - d.motion.legStart[i];
     double p = span > 0 ? (t - d.motion.legStart[i]) / span : 1.0;
     if (p < 0) p = 0;
     if (p > 1) p = 1;
-    const GraphNode& a = g.node(d.motion.nodes[i]);
-    const GraphNode& b = g.node(d.motion.nodes[i + 1]);
-    return DriverPosition{a.lat + (b.lat - a.lat) * p, a.lng + (b.lng - a.lng) * p, a.id, b.id, p};
+    const Area& a = g.getNode(d.motion.nodes[i]);
+    const Area& b = g.getNode(d.motion.nodes[i + 1]);
+    pos.lat = a.lat + (b.lat - a.lat) * p;
+    pos.lng = a.lng + (b.lng - a.lng) * p;
+    pos.fromNode = a.id;
+    pos.toNode = b.id;
+    pos.progress = p;
+    return pos;
 }
 
-// Driver stops wherever it is (snapped to the closer end of its road) and
-// becomes free again.
 void Dispatcher::releaseDriver(Driver& d, DSTrace& trace) {
     d.areaId = nearestNode(d);
     d.motion.clear();
@@ -180,68 +274,63 @@ void Dispatcher::releaseDriver(Driver& d, DSTrace& trace) {
 
 void Dispatcher::finishRide(Ride& r, RideStatus status, DSTrace& trace) {
     r.status = status;
-    r.endTime = clock_.now;
-    activeRides_.erase(r.id);
-    activeByRider_.erase(riderKey(r.riderName));
-    history_.getOrInsert(riderKey(r.riderName), LinkedList<int>()).pushFront(r.id);
+    r.endTime = simClock.now;
+    active.remove(r.id);
+    Rider* rider = findRider(r.riderName);
+    if (rider != NULL) {
+        rider->activeRideId = -1;
+        rider->history.pushFront(r.id);
+    }
     trace.add("LinkedList", "pushFront", "O(1)", rideTag(r.id) + " added to " + r.riderName + "'s history");
 }
 
-void Dispatcher::forceCancel(Ride& r, const std::string& reason, DSTrace& trace) {
+void Dispatcher::forceCancel(Ride& r, string reason, DSTrace& trace) {
     if (r.status == RideStatus::WAITING) {
-        if (queue_.removeById(r.id))
+        if (waiting.removeById(r.id)) {
             trace.add("LinkedQueue", "removeById", "O(n)", rideTag(r.id) + " removed from waiting queue");
-        addPending(r.pickup, -1);
+        }
+        pendingPerArea.addTo(r.pickup, -1);
     } else if (r.status == RideStatus::ASSIGNED || r.status == RideStatus::IN_PROGRESS) {
-        if (r.status == RideStatus::ASSIGNED) addPending(r.pickup, -1);
-        Driver* d = drivers_.find(r.driverId);
-        if (d) releaseDriver(*d, trace);
+        if (r.status == RideStatus::ASSIGNED) pendingPerArea.addTo(r.pickup, -1);
+        Driver* d = findDriver(r.driverId);
+        if (d != NULL) releaseDriver(*d, trace);
     }
-    r.eventVersion++;   // any scheduled event for this ride is now stale
+    // any event already in the heap for this ride is now stale
+    r.eventVersion++;
     r.cancelReason = reason;
     finishRide(r, RideStatus::CANCELLED, trace);
 }
 
 void Dispatcher::applyRating(Driver& d, int stars, DSTrace& trace) {
-    DriverKey oldKey{d.ratingCenti, d.id};
-    leaderboard_.remove(oldKey);
-    lastRotations_ = leaderboard_.lastRotations();
+    int oldRating = d.rating;
+    ratings.clearLastRotations();
+    ratings.remove(d.rating, d.id);
     d.ratingSum += stars;
-    d.ratingCount += 1;
-    d.ratingCenti = (int)std::lround(d.ratingSum / d.ratingCount * 100.0);
-    leaderboard_.insert(DriverKey{d.ratingCenti, d.id});
-    for (const std::string& rot : leaderboard_.lastRotations()) lastRotations_.push_back(rot);
+    d.ratingCount++;
+    d.rating = (int)round(d.ratingSum / d.ratingCount * 100.0);
+    ratings.insert(d.rating, d.id);
     trace.add("AVLTree", "delete+insert", "O(log n)",
-              d.name + " rated " + std::to_string(stars) + "★: " + DSTrace::num(oldKey.ratingCenti / 100.0, 2) +
-                  " → " + DSTrace::num(d.ratingCenti / 100.0, 2));
-    for (const std::string& rot : lastRotations_) trace.add("AVLTree", "rotate", "O(1)", rot);
+              d.name + " rated " + to_string(stars) + "★: " + DSTrace::num(oldRating / 100.0, 2) + " → " +
+                  DSTrace::num(d.rating / 100.0, 2));
+    for (int i = 0; i < ratings.lastRotationCount(); i++) trace.add("AVLTree", "rotate", "O(1)", ratings.lastRotation(i));
 }
 
-// ---------------------------------------------------------------- matching
-
 bool Dispatcher::tryAssign(Ride& r, DSTrace& trace) {
-    RideType type = r.type;
-    std::function<bool(int)> hasFreeDriver = [this, type, &trace](int area) {
-        const LinkedList<int>* l = freeIndex_.find(freeKey(area, type));
-        bool found = l && !l->isEmpty();
-        trace.add("HashTable", "find", "O(1) avg",
-                  std::string("Free ") + toString(type) + " at " + map_.areaName(area) + "? " + (found ? "yes" : "no"));
-        return found;
-    };
-    NearestResult nearest = Dijkstra::findNearest(map_.graph(), r.pickup, hasFreeDriver, &trace);
-    if (nearest.node == -1) return false;
+    int area = -1;
+    PathResult path = Dijkstra::findNearest(cityMap.graph(), r.pickup, freeCount, r.type, area, &trace);
+    if (area == -1) return false;
 
-    // several drivers in the winning area: pick the best rated
-    Driver* best = nullptr;
-    freeIndex_.find(freeKey(nearest.node, type))->forEach([this, &best](int id) {
-        Driver* d = drivers_.find(id);
-        if (d && (!best || d->ratingCenti > best->ratingCenti)) best = d;
-    });
-    if (!best) return false;
+    // several drivers in the closest area: take the best rated one
+    Driver* best = NULL;
+    for (int i = 0; i < numDrivers; i++) {
+        Driver& d = drivers[i];
+        if (d.status != DriverStatus::AVAILABLE || d.areaId != area || d.type != r.type) continue;
+        if (best == NULL || d.rating > best->rating) best = &d;
+    }
+    if (best == NULL) return false;
     trace.add("Dijkstra", "nearestDriver", "O((V+E) log V)",
-              best->name + " at " + map_.areaName(best->areaId) + ", " + DSTrace::num(nearest.path.distance, 1) +
-                  " km from pickup");
-    assignDriver(r, *best, reversed(nearest.path), trace);
+              best->name + " at " + cityMap.areaName(best->areaId) + ", " + DSTrace::num(path.distance, 1) + " km from pickup");
+    assignDriver(r, *best, reversePath(path), trace);
     return true;
 }
 
@@ -249,228 +338,252 @@ void Dispatcher::assignDriver(Ride& r, Driver& d, const PathResult& driverToPick
     removeFree(d, &trace);
     d.status = DriverStatus::TO_PICKUP;
     d.rideId = r.id;
-    startMotion(d, driverToPickup, clock_.now);
-    double arrival = d.motion.active() ? d.motion.endTime() : clock_.now + kPickupDelayMin;
+    startMotion(d, driverToPickup, simClock.now);
+    double arrival = simClock.now + PICKUP_DELAY_MIN;
+    if (d.motion.active()) arrival = d.motion.endTime();
 
     r.status = RideStatus::ASSIGNED;
     r.driverId = d.id;
-    r.assignTime = clock_.now;
+    r.assignTime = simClock.now;
     r.etaPickup = arrival;
     r.eventVersion++;
     schedule(EventType::DRIVER_ARRIVED_PICKUP, r, arrival, trace);
 }
 
-OpResult Dispatcher::requestRide(const std::string& riderName, int pickup, int drop, RideType type,
-                                 bool autoGenerated, DSTrace& trace) {
-    std::string name = CityMap::normalize(riderName);
-    if (name.empty()) return OpResult::fail(400, "MISSING_FIELD", "Rider name is required");
-    if ((int)riderName.size() > kMaxNameLength)
-        return OpResult::fail(400, "INVALID_NAME", "Rider name must be at most 40 characters");
-    if (!map_.isValidArea(pickup)) return OpResult::fail(400, "INVALID_AREA", "Unknown pickup area");
-    if (!map_.isValidArea(drop)) return OpResult::fail(400, "INVALID_AREA", "Unknown drop area");
-    if (pickup == drop) return OpResult::fail(400, "SAME_LOCATION", "Pickup and drop must be different areas");
+void Dispatcher::setTrip(Ride& r, const PathResult& trip) {
+    for (int i = 0; i < trip.nodeCount; i++) r.tripNodes[i] = trip.nodes[i];
+    r.tripCount = trip.nodeCount;
+}
 
-    int active = activeRideOf(name);
-    trace.add("HashTable", "find", "O(1) avg", "Rider \"" + riderName + "\" active ride? " + (active == -1 ? "none" : rideTag(active)));
-    if (active != -1)
-        return OpResult::fail(409, "DUPLICATE_REQUEST", "This rider already has an active ride (" + rideTag(active) + ")");
-
-    PathResult trip = Dijkstra::shortestPath(map_.graph(), pickup, drop, &trace);
-    if (!trip.found)
-        return OpResult::fail(409, "UNREACHABLE", "Destination unreachable due to road block");
-
-    Ride r;
-    r.id = nextRideId_++;
-    r.riderName = riderName;
-    r.pickup = pickup;
-    r.drop = drop;
-    r.type = type;
-    r.requestTime = clock_.now;
-    r.distanceKm = trip.distance;
-    r.tripNodes = trip.nodes;
-    r.surge = surge_.multiplierAt(pickup);
-    r.fare = computeFare(type, trip.distance, r.surge);
-    r.autoGenerated = autoGenerated;
-    trace.add("BFS+HashTable", "surgeLookup", "O(1)",
-              map_.areaName(pickup) + " surge " + DSTrace::num(r.surge, 2) + "x, fare Rs " + std::to_string(r.fare));
-
-    rides_.insert(r.id, r);
-    activeRides_.insert(r.id, 1);
-    activeByRider_.insert(riderKey(riderName), r.id);
-    addPending(pickup, +1);
-    requestsPerArea_.getOrInsert(pickup, 0) += 1;
-    trace.add("HashTable", "insert", "O(1) avg", rideTag(r.id) + " stored");
-
-    Ride* stored = rides_.find(r.id);
-    if (!tryAssign(*stored, trace)) {
-        queue_.enqueue(PendingRequest{stored->id, pickup});
-        trace.add("LinkedQueue", "enqueue", "O(1)",
-                  "No free " + std::string(toString(type)) + " reachable — " + rideTag(r.id) + " waits (position " +
-                      std::to_string(queue_.size()) + ")");
+OpResult Dispatcher::requestRide(string riderName, int pickup, int drop, RideType type, bool autoGenerated,
+                                 DSTrace& trace) {
+    string key = CityMap::normalize(riderName);
+    if (key.empty()) return errorResult(400, "MISSING_FIELD", "Rider name is required");
+    if ((int)riderName.size() > MAX_NAME_LENGTH) {
+        return errorResult(400, "INVALID_NAME", "Rider name must be at most 40 characters");
     }
-    return OpResult::success(r.id);
+    if (!cityMap.isValidArea(pickup)) return errorResult(400, "INVALID_AREA", "Unknown pickup area");
+    if (!cityMap.isValidArea(drop)) return errorResult(400, "INVALID_AREA", "Unknown drop area");
+    if (pickup == drop) return errorResult(400, "SAME_LOCATION", "Pickup and drop must be different areas");
+
+    Rider* rider = findRider(riderName);
+    int activeId = rider != NULL ? rider->activeRideId : -1;
+    trace.add("HashTable", "find", "O(1) avg",
+              "Rider \"" + riderName + "\" active ride? " + (activeId == -1 ? string("none") : rideTag(activeId)));
+    if (activeId != -1) {
+        return errorResult(409, "DUPLICATE_REQUEST", "This rider already has an active ride (" + rideTag(activeId) + ")");
+    }
+
+    PathResult trip = Dijkstra::shortestPath(cityMap.graph(), pickup, drop, &trace);
+    if (!trip.found) return errorResult(409, "UNREACHABLE", "Destination unreachable due to road block");
+
+    Ride* r = new Ride;
+    r->id = nextRideId;
+    nextRideId++;
+    r->riderName = riderName;
+    r->pickup = pickup;
+    r->drop = drop;
+    r->type = type;
+    r->status = RideStatus::WAITING;
+    r->driverId = -1;
+    r->distanceKm = trip.distance;
+    r->surge = surgeEngine.multiplierAt(pickup);
+    r->fare = computeFare(type, trip.distance, r->surge);
+    r->requestTime = simClock.now;
+    r->assignTime = -1;
+    r->pickupTime = -1;
+    r->completeTime = -1;
+    r->endTime = -1;
+    r->etaPickup = -1;
+    setTrip(*r, trip);
+    r->cancelReason = "";
+    r->rating = 0;
+    r->autoGenerated = autoGenerated;
+    r->eventVersion = 0;
+    trace.add("BFS+HashTable", "surgeLookup", "O(1)",
+              cityMap.areaName(pickup) + " surge " + DSTrace::num(r->surge, 2) + "x, fare Rs " + to_string(r->fare));
+
+    addRide(r);
+    if (rider == NULL) rider = addRider(riderName);
+    rider->activeRideId = r->id;
+    active.pushFront(r->id);
+    pendingPerArea.addTo(pickup, 1);
+    requestsPerArea.addTo(pickup, 1);
+    trace.add("HashTable", "insert", "O(1) avg", rideTag(r->id) + " stored");
+
+    if (!tryAssign(*r, trace)) {
+        waiting.enqueue(r->id);
+        trace.add("LinkedQueue", "enqueue", "O(1)",
+                  "No free " + rideTypeName(type) + " reachable — " + rideTag(r->id) + " waits (position " +
+                      to_string(waiting.size()) + ")");
+    }
+    return okResult(r->id, "");
 }
 
 void Dispatcher::processQueue(DSTrace& trace) {
-    int n = queue_.size();
-    for (int i = 0; i < n; ++i) {
-        PendingRequest p{0, 0};
-        if (!queue_.dequeue(p)) break;
-        trace.add("LinkedQueue", "dequeue", "O(1)", "Retry " + rideTag(p.id));
-        Ride* r = rides_.find(p.id);
-        if (!r || r->status != RideStatus::WAITING) continue;
-        if (!BFS::isReachable(map_.graph(), r->pickup, r->drop, &trace)) {
+    int n = waiting.size();
+    for (int i = 0; i < n; i++) {
+        int id = 0;
+        if (!waiting.dequeue(id)) break;
+        trace.add("LinkedQueue", "dequeue", "O(1)", "Retry " + rideTag(id));
+        Ride* r = findRide(id);
+        if (r == NULL || r->status != RideStatus::WAITING) continue;
+        if (!BFS::isReachable(cityMap.graph(), r->pickup, r->drop, &trace)) {
             forceCancel(*r, "Destination unreachable due to road block", trace);
             continue;
         }
         if (!tryAssign(*r, trace)) {
-            queue_.enqueue(p);   // keep FIFO order for the next retry
-            trace.add("LinkedQueue", "enqueue", "O(1)", rideTag(p.id) + " still waiting");
+            // back to the rear, so FIFO order is kept for the next retry
+            waiting.enqueue(id);
+            trace.add("LinkedQueue", "enqueue", "O(1)", rideTag(id) + " still waiting");
         }
     }
 }
 
-// --------------------------------------------------------------- lifecycle
-
 OpResult Dispatcher::cancelRide(int rideId, DSTrace& trace) {
-    Ride* r = rides_.find(rideId);
-    trace.add("HashTable", "find", "O(1) avg", rideTag(rideId) + (r ? " found" : " not found"));
-    if (!r) return OpResult::fail(404, "RIDE_NOT_FOUND", "No ride with id " + std::to_string(rideId));
-    if (r->status == RideStatus::COMPLETED)
-        return OpResult::fail(409, "ALREADY_COMPLETED", "Ride is already completed");
-    if (r->status == RideStatus::CANCELLED)
-        return OpResult::fail(409, "ALREADY_CANCELLED", "Ride is already cancelled");
-    if (r->status == RideStatus::IN_PROGRESS)
-        return OpResult::fail(409, "CANCEL_NOT_ALLOWED", "Ride is in progress and cannot be cancelled");
-
+    Ride* r = findRide(rideId);
+    trace.add("HashTable", "find", "O(1) avg", rideTag(rideId) + (r != NULL ? " found" : " not found"));
+    if (r == NULL) return errorResult(404, "RIDE_NOT_FOUND", "No ride with id " + to_string(rideId));
+    if (r->status == RideStatus::COMPLETED) return errorResult(409, "ALREADY_COMPLETED", "Ride is already completed");
+    if (r->status == RideStatus::CANCELLED) return errorResult(409, "ALREADY_CANCELLED", "Ride is already cancelled");
+    if (r->status == RideStatus::IN_PROGRESS) {
+        return errorResult(409, "CANCEL_NOT_ALLOWED", "Ride is in progress and cannot be cancelled");
+    }
     bool freesDriver = r->status == RideStatus::ASSIGNED;
     forceCancel(*r, "Cancelled by rider", trace);
     if (freesDriver) processQueue(trace);
-    return OpResult::success(rideId, "Ride cancelled");
+    return okResult(rideId, "Ride cancelled");
 }
 
 OpResult Dispatcher::rateRide(int rideId, int stars, DSTrace& trace) {
-    if (stars < 1 || stars > 5) return OpResult::fail(400, "INVALID_RATING", "Rating must be between 1 and 5");
-    Ride* r = rides_.find(rideId);
-    trace.add("HashTable", "find", "O(1) avg", rideTag(rideId) + (r ? " found" : " not found"));
-    if (!r) return OpResult::fail(404, "RIDE_NOT_FOUND", "No ride with id " + std::to_string(rideId));
-    if (r->status != RideStatus::COMPLETED)
-        return OpResult::fail(409, "NOT_COMPLETED", "Only completed rides can be rated");
-    if (r->rating != 0) return OpResult::fail(409, "ALREADY_RATED", "This ride was already rated");
-    Driver* d = drivers_.find(r->driverId);
-    if (!d) return OpResult::fail(404, "DRIVER_NOT_FOUND", "Driver no longer exists");
+    if (stars < 1 || stars > 5) return errorResult(400, "INVALID_RATING", "Rating must be between 1 and 5");
+    Ride* r = findRide(rideId);
+    trace.add("HashTable", "find", "O(1) avg", rideTag(rideId) + (r != NULL ? " found" : " not found"));
+    if (r == NULL) return errorResult(404, "RIDE_NOT_FOUND", "No ride with id " + to_string(rideId));
+    if (r->status != RideStatus::COMPLETED) return errorResult(409, "NOT_COMPLETED", "Only completed rides can be rated");
+    if (r->rating != 0) return errorResult(409, "ALREADY_RATED", "This ride was already rated");
+    Driver* d = findDriver(r->driverId);
+    if (d == NULL) return errorResult(404, "DRIVER_NOT_FOUND", "Driver no longer exists");
     r->rating = stars;
     applyRating(*d, stars, trace);
-    return OpResult::success(rideId, "Thanks for rating");
+    return okResult(rideId, "Thanks for rating");
 }
 
-void Dispatcher::handleEvent(const Event& e, DSTrace& trace) {
-    Ride* r = rides_.find(e.rideId);
-    if (!r || r->eventVersion != e.version) {
-        trace.add("MinHeap", "popMin", "O(log n)", std::string("Stale ") + toString(e.type) + " for " + rideTag(e.rideId) + " ignored");
+void Dispatcher::handleEvent(const HeapItem& e, DSTrace& trace) {
+    EventType type = (EventType)e.type;
+    Ride* r = findRide(e.value);
+    if (r == NULL || r->eventVersion != e.version) {
+        trace.add("MinHeap", "popMin", "O(log n)", "Stale " + eventTypeName(type) + " for " + rideTag(e.value) + " ignored");
         return;
     }
-    trace.add("MinHeap", "popMin", "O(log n)", std::string(toString(e.type)) + " for " + rideTag(r->id));
-    if (e.type == EventType::DRIVER_ARRIVED_PICKUP && r->status == RideStatus::ASSIGNED) onArrivedPickup(*r, trace);
-    else if (e.type == EventType::RIDE_COMPLETED && r->status == RideStatus::IN_PROGRESS) onRideCompleted(*r, trace);
-    else if (e.type == EventType::DRIVER_FREE && r->status == RideStatus::COMPLETED) onDriverFree(*r, trace);
+    trace.add("MinHeap", "popMin", "O(log n)", eventTypeName(type) + " for " + rideTag(r->id));
+    if (type == EventType::DRIVER_ARRIVED_PICKUP && r->status == RideStatus::ASSIGNED) {
+        onArrivedPickup(*r, trace);
+    } else if (type == EventType::RIDE_COMPLETED && r->status == RideStatus::IN_PROGRESS) {
+        onRideCompleted(*r, trace);
+    } else if (type == EventType::DRIVER_FREE && r->status == RideStatus::COMPLETED) {
+        onDriverFree(*r, trace);
+    }
 }
 
 void Dispatcher::onArrivedPickup(Ride& r, DSTrace& trace) {
-    Driver* d = drivers_.find(r.driverId);
-    if (!d) return;
+    Driver* d = findDriver(r.driverId);
+    if (d == NULL) return;
     d->areaId = r.pickup;
     d->motion.clear();
 
-    PathResult trip = Dijkstra::shortestPath(map_.graph(), r.pickup, r.drop, &trace);
+    PathResult trip = Dijkstra::shortestPath(cityMap.graph(), r.pickup, r.drop, &trace);
     if (!trip.found) {
         forceCancel(r, "Destination unreachable due to road block", trace);
         processQueue(trace);
         return;
     }
-    addPending(r.pickup, -1);   // no longer waiting at the pickup
+    pendingPerArea.addTo(r.pickup, -1);
     r.status = RideStatus::IN_PROGRESS;
-    r.pickupTime = clock_.now;
-    r.tripNodes = trip.nodes;
+    r.pickupTime = simClock.now;
+    setTrip(r, trip);
     d->status = DriverStatus::ON_TRIP;
-    startMotion(*d, trip, clock_.now);
+    startMotion(*d, trip, simClock.now);
     schedule(EventType::RIDE_COMPLETED, r, d->motion.endTime(), trace);
 }
 
 void Dispatcher::onRideCompleted(Ride& r, DSTrace& trace) {
-    Driver* d = drivers_.find(r.driverId);
-    if (!d) return;
+    Driver* d = findDriver(r.driverId);
+    if (d == NULL) return;
     d->areaId = r.drop;
     d->motion.clear();
     d->earnings += r.fare;
-    d->tripsCompleted += 1;
-    r.completeTime = clock_.now;
+    d->tripsCompleted++;
+    r.completeTime = simClock.now;
     finishRide(r, RideStatus::COMPLETED, trace);
-    if (r.autoGenerated) {   // simulated riders rate automatically (3..5)
-        r.rating = 3 + (int)(rng_() % 3);
+    // rush hour riders rate automatically (3 to 5 stars)
+    if (r.autoGenerated) {
+        r.rating = 3 + (int)(rng() % 3);
         applyRating(*d, r.rating, trace);
     }
-    schedule(EventType::DRIVER_FREE, r, clock_.now + kDropHandoverMin, trace);
+    schedule(EventType::DRIVER_FREE, r, simClock.now + DROP_HANDOVER_MIN, trace);
 }
 
 void Dispatcher::onDriverFree(Ride& r, DSTrace& trace) {
-    Driver* d = drivers_.find(r.driverId);
-    if (!d || d->rideId != r.id) return;
+    Driver* d = findDriver(r.driverId);
+    if (d == NULL || d->rideId != r.id) return;
     releaseDriver(*d, trace);
     processQueue(trace);
 }
 
-// ----------------------------------------------------------------- traffic
-
-bool Dispatcher::pathUsesRoad(const std::vector<int>& nodes, int roadId) const {
-    for (size_t i = 0; i + 1 < nodes.size(); ++i)
-        if (map_.graph().findRoad(nodes[i], nodes[i + 1]) == roadId) return true;
+bool Dispatcher::pathUsesRoad(const Ride& r, int roadId) const {
+    for (int i = 0; i + 1 < r.tripCount; i++) {
+        if (cityMap.graph().findRoad(r.tripNodes[i], r.tripNodes[i + 1]) == roadId) return true;
+    }
     return false;
 }
 
 void Dispatcher::reroute(Ride& r, Driver& d, DSTrace& trace) {
-    double now = clock_.now;
+    double now = simClock.now;
     if (!d.motion.active() || now >= d.motion.endTime()) return;
     int i = d.motion.legAt(now);
-    int startNode = d.motion.nodes[i + 1];   // finish the current road first
+    // the car finishes the road it is on, then follows the new route
+    int startNode = d.motion.nodes[i + 1];
     double startTime = d.motion.legEnd[i];
     bool toPickup = r.status == RideStatus::ASSIGNED;
     int target = toPickup ? r.pickup : r.drop;
 
-    if (!BFS::isReachable(map_.graph(), r.pickup, r.drop, &trace) && toPickup) {
+    if (toPickup && !BFS::isReachable(cityMap.graph(), r.pickup, r.drop, &trace)) {
         forceCancel(r, "Destination unreachable due to road block", trace);
         return;
     }
-    if (!BFS::isReachable(map_.graph(), startNode, target, &trace)) {
+    if (!BFS::isReachable(cityMap.graph(), startNode, target, &trace)) {
         if (!toPickup) {
             forceCancel(r, "Destination unreachable due to road block", trace);
             return;
         }
-        // this driver is cut off from the pickup: release and wait again
+        // driver is cut off from the pickup: free the driver and wait again
         r.eventVersion++;
         r.status = RideStatus::WAITING;
         r.driverId = -1;
         r.etaPickup = -1;
         releaseDriver(d, trace);
-        queue_.enqueue(PendingRequest{r.id, r.pickup});
+        waiting.enqueue(r.id);
         trace.add("LinkedQueue", "enqueue", "O(1)", rideTag(r.id) + " back to waiting (driver cut off)");
         return;
     }
 
-    PathResult rest = Dijkstra::shortestPath(map_.graph(), startNode, target, &trace);
+    PathResult rest = Dijkstra::shortestPath(cityMap.graph(), startNode, target, &trace);
     Motion m;
-    m.nodes.push_back(d.motion.nodes[i]);
-    m.nodes.push_back(startNode);
-    m.roads.push_back(d.motion.roads[i]);
-    m.legStart.push_back(d.motion.legStart[i]);
-    m.legEnd.push_back(startTime);
+    m.nodes[0] = d.motion.nodes[i];
+    m.nodes[1] = startNode;
+    m.roads[0] = d.motion.roads[i];
+    m.legStart[0] = d.motion.legStart[i];
+    m.legEnd[0] = startTime;
+    m.legCount = 1;
     double t = startTime;
-    for (size_t k = 0; k < rest.roads.size(); ++k) {
-        m.nodes.push_back(rest.nodes[k + 1]);
-        m.roads.push_back(rest.roads[k]);
-        m.legStart.push_back(t);
+    for (int k = 0; k + 1 < rest.nodeCount && m.legCount + 1 < MAX_ROUTE; k++) {
+        m.nodes[m.legCount + 1] = rest.nodes[k + 1];
+        m.roads[m.legCount] = rest.roads[k];
+        m.legStart[m.legCount] = t;
         t += legMinutes(rest.roads[k]);
-        m.legEnd.push_back(t);
+        m.legEnd[m.legCount] = t;
+        m.legCount++;
     }
     d.motion = m;
     r.eventVersion++;
@@ -478,74 +591,129 @@ void Dispatcher::reroute(Ride& r, Driver& d, DSTrace& trace) {
         r.etaPickup = t;
         schedule(EventType::DRIVER_ARRIVED_PICKUP, r, t, trace);
     } else {
-        r.tripNodes = m.nodes;
+        for (int k = 0; k <= m.legCount; k++) r.tripNodes[k] = m.nodes[k];
+        r.tripCount = m.legCount + 1;
         schedule(EventType::RIDE_COMPLETED, r, t, trace);
     }
     trace.add("Dijkstra", "reroute", "O((V+E) log V)",
-              rideTag(r.id) + " re-routed from " + map_.areaName(startNode) + ", new ETA t=" + DSTrace::num(t, 1));
+              rideTag(r.id) + " re-routed from " + cityMap.areaName(startNode) + ", new ETA t=" + DSTrace::num(t, 1));
 }
 
 void Dispatcher::onRoadChanged(int roadId, DSTrace& trace) {
-    // collect first: rerouting may erase ids from activeRides_
-    std::vector<int> ids;
-    activeRides_.forEach([&ids](int id, int) { ids.push_back(id); });
-    double now = clock_.now;
-    for (int id : ids) {
-        Ride* r = rides_.find(id);
-        if (!r) continue;
-        // planned trip (pickup -> drop) of rides not yet picked up
-        if ((r->status == RideStatus::ASSIGNED || r->status == RideStatus::WAITING) && pathUsesRoad(r->tripNodes, roadId)) {
-            PathResult trip = Dijkstra::shortestPath(map_.graph(), r->pickup, r->drop, &trace);
+    // copy the ids first because cancelling a ride removes it from the active list
+    int count = active.size();
+    int* ids = new int[count + 1];
+    int k = 0;
+    for (ListNode* p = active.getHead(); p != NULL; p = p->next) {
+        ids[k] = p->value;
+        k++;
+    }
+    double now = simClock.now;
+    for (int j = 0; j < count; j++) {
+        Ride* r = findRide(ids[j]);
+        if (r == NULL) continue;
+        // planned trip of rides not picked up yet
+        if ((r->status == RideStatus::ASSIGNED || r->status == RideStatus::WAITING) && pathUsesRoad(*r, roadId)) {
+            PathResult trip = Dijkstra::shortestPath(cityMap.graph(), r->pickup, r->drop, &trace);
             if (!trip.found) {
                 bool freesDriver = r->status == RideStatus::ASSIGNED;
                 forceCancel(*r, "Destination unreachable due to road block", trace);
                 if (freesDriver) processQueue(trace);
                 continue;
             }
-            r->tripNodes = trip.nodes;
+            setTrip(*r, trip);
         }
         if (r->status != RideStatus::ASSIGNED && r->status != RideStatus::IN_PROGRESS) continue;
-        Driver* d = drivers_.find(r->driverId);
-        if (!d || !d->motion.active() || now >= d->motion.endTime()) continue;
+        Driver* d = findDriver(r->driverId);
+        if (d == NULL || !d->motion.active() || now >= d->motion.endTime()) continue;
         int current = d->motion.legAt(now);
         bool usesRoad = false;
-        for (int k = current + 1; k < (int)d->motion.roads.size(); ++k)
-            if (d->motion.roads[k] == roadId) usesRoad = true;
+        for (int leg = current + 1; leg < d->motion.legCount; leg++) {
+            if (d->motion.roads[leg] == roadId) usesRoad = true;
+        }
         if (usesRoad) reroute(*r, *d, trace);
     }
-    processQueue(trace);   // waiting rides may now be reachable (or not)
+    delete[] ids;
+    processQueue(trace);
 }
 
 void Dispatcher::recomputeSurge(DSTrace* trace) {
-    surge_.recompute(
-        map_.graph(), [this](int a) { return pendingInArea(a); }, [this](int a) { return freeDriversInArea(a); },
-        trace);
+    int demand[MAX_NODES];
+    int freeAt[MAX_NODES];
+    for (int a = 0; a < cityMap.areaCount(); a++) {
+        demand[a] = pendingInArea(a);
+        freeAt[a] = freeDriversInArea(a);
+    }
+    surgeEngine.recompute(cityMap.graph(), demand, freeAt, trace);
 }
 
-// --------------------------------------------------------------- analytics
+int Dispatcher::driverCount() const {
+    return numDrivers;
+}
 
-namespace {
-struct FewerRequests {
-    bool operator()(const AreaStat& a, const AreaStat& b) const {
-        if (a.requests != b.requests) return a.requests < b.requests;
-        return a.area > b.area;
-    }
-};
-}  // namespace
+const Driver& Dispatcher::driverAt(int i) const {
+    return drivers[i];
+}
+
+int Dispatcher::rideCount() const {
+    return numRides;
+}
+
+const Ride& Dispatcher::rideAt(int i) const {
+    return *rides[i];
+}
+
+const LinkedList& Dispatcher::activeRides() const {
+    return active;
+}
+
+const LinkedQueue& Dispatcher::queue() const {
+    return waiting;
+}
+
+const AVLTree& Dispatcher::leaderboard() const {
+    return ratings;
+}
+
+const SurgeEngine& Dispatcher::surge() const {
+    return surgeEngine;
+}
+
+const HashTable& Dispatcher::driverTable() const {
+    return driverIndex;
+}
+
+const HashTable& Dispatcher::rideTable() const {
+    return rideIndex;
+}
 
 Analytics Dispatcher::analytics() const {
     Analytics a;
-    double waitSum = 0, fareSum = 0;
+    a.totalRides = 0;
+    a.completed = 0;
+    a.cancelled = 0;
+    a.active = 0;
+    a.waiting = 0;
+    a.hourCount = 0;
+    a.busiestTotal = 0;
+    for (int t = 0; t < RIDE_TYPE_COUNT; t++) a.byType[t] = 0;
+    for (int h = 0; h < MAX_HOURS; h++) a.ridesPerHour[h] = 0;
+
+    double waitSum = 0;
+    double fareSum = 0;
     int waitCount = 0;
-    rides_.forEach([&](int, const Ride& r) {
+    for (int i = 0; i < numRides; i++) {
+        const Ride& r = *rides[i];
         a.totalRides++;
         a.byType[(int)r.type]++;
         if (r.status == RideStatus::COMPLETED) {
             a.completed++;
             fareSum += r.fare;
             int hour = (int)(r.completeTime / 60.0);
-            while ((int)a.ridesPerHour.size() <= hour) a.ridesPerHour.push_back(0);
-            a.ridesPerHour[hour]++;
+            if (hour >= 0 && hour < MAX_HOURS) {
+                a.ridesPerHour[hour]++;
+                if (hour + 1 > a.hourCount) a.hourCount = hour + 1;
+            }
         } else if (r.status == RideStatus::CANCELLED) {
             a.cancelled++;
         } else {
@@ -556,28 +724,38 @@ Analytics Dispatcher::analytics() const {
             waitSum += r.pickupTime - r.requestTime;
             waitCount++;
         }
-    });
+    }
     a.revenue = fareSum;
-    a.avgFare = a.completed ? fareSum / a.completed : 0.0;
-    a.avgWaitMin = waitCount ? waitSum / waitCount : 0.0;
+    a.avgFare = a.completed > 0 ? fareSum / a.completed : 0;
+    a.avgWaitMin = waitCount > 0 ? waitSum / waitCount : 0;
 
-    // top 5 busiest areas: keep a size-5 min-heap, evict the smallest
-    MinHeap<AreaStat, FewerRequests> top;
-    requestsPerArea_.forEach([&top](int area, const int& count) {
-        top.push(AreaStat{area, count});
-        AreaStat dropped{0, 0};
-        if (top.size() > 5) top.popMin(dropped);
-    });
-    AreaStat s{0, 0};
-    std::vector<AreaStat> ascending;
-    while (top.popMin(s)) ascending.push_back(s);
-    for (int i = (int)ascending.size() - 1; i >= 0; --i) a.busiest.push_back(ascending[i]);
-
-    drivers_.forEach([&a](int id, const Driver& d) {
-        if (a.topEarnerId == -1 || d.earnings > a.topEarnings) {
-            a.topEarnerId = id;
-            a.topEarnings = d.earnings;
+    // top 5 areas by request count: pick the biggest remaining one 5 times
+    bool used[MAX_NODES];
+    for (int i = 0; i < cityMap.areaCount(); i++) used[i] = false;
+    for (int k = 0; k < TOP_AREAS; k++) {
+        int bestArea = -1;
+        int bestCount = 0;
+        for (int area = 0; area < cityMap.areaCount(); area++) {
+            int c = requestsPerArea.get(area);
+            if (!used[area] && c > bestCount) {
+                bestArea = area;
+                bestCount = c;
+            }
         }
-    });
+        if (bestArea == -1) break;
+        used[bestArea] = true;
+        a.busiestArea[k] = bestArea;
+        a.busiestCount[k] = bestCount;
+        a.busiestTotal++;
+    }
+
+    a.topEarnerId = -1;
+    a.topEarnings = 0;
+    for (int i = 0; i < numDrivers; i++) {
+        if (a.topEarnerId == -1 || drivers[i].earnings > a.topEarnings) {
+            a.topEarnerId = drivers[i].id;
+            a.topEarnings = drivers[i].earnings;
+        }
+    }
     return a;
 }
