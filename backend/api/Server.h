@@ -1,10 +1,11 @@
 #pragma once
-#include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
 
 #include "core/Simulator.h"
+
+using namespace std;
 
 namespace httplib {
 class Server;
@@ -12,52 +13,42 @@ struct Request;
 struct Response;
 }
 
-/*
- * Server — REST API (cpp-httplib) + static file host for the frontend.
- *
- * One mutex guards the Simulator: the background simulation thread and
- * every HTTP handler lock it, so no request ever sees a half-updated state.
- *
- * Every handler validates its input and answers with
- *   { "ok": true,  "data": ..., "trace": [...], "truncated": bool }   or
- *   { "ok": false, "error": "...", "code": "..." } + HTTP 400/404/409/500
- * Uncaught exceptions are turned into a 500 JSON error, never a crash.
- */
+// REST API + static frontend. One mutex guards the simulator for the
+// background clock thread and every request handler.
 class ApiServer {
 public:
-    ApiServer(Simulator& sim, const std::string& staticDir);
+    ApiServer(Simulator& simRef, string staticFolder);
     ~ApiServer();
 
-    // Blocks until stop(). Returns false if the port could not be bound.
-    bool run(const std::string& host, int port);
+    bool run(string host, int port);
     void stop();
 
 private:
-    Simulator& sim_;
-    std::string staticDir_;
-    std::mutex mutex_;
-    std::atomic<bool> running_{false};
-    std::thread simThread_;
-    httplib::Server* http_;
+    Simulator& sim;
+    string staticDir;
+    mutex simMutex;
+    bool running;
+    thread simThread;
+    httplib::Server* http;
 
+    bool isRunning();
     void registerRoutes();
     void simulationLoop();
 
-    // route handlers
-    void getMap(const httplib::Request&, httplib::Response&);
-    void getState(const httplib::Request&, httplib::Response&);
-    void getRide(const httplib::Request&, httplib::Response&);
-    void getSearch(const httplib::Request&, httplib::Response&);
-    void postRideRequest(const httplib::Request&, httplib::Response&);
-    void postRideCancel(const httplib::Request&, httplib::Response&);
-    void postRideRate(const httplib::Request&, httplib::Response&);
-    void getRiderHistory(const httplib::Request&, httplib::Response&);
-    void postRoadTraffic(const httplib::Request&, httplib::Response&);
-    void postRoadBlock(const httplib::Request&, httplib::Response&);
-    void getLeaderboard(const httplib::Request&, httplib::Response&);
-    void getAnalytics(const httplib::Request&, httplib::Response&);
-    void postSimControl(const httplib::Request&, httplib::Response&);
-    void getRoute(const httplib::Request&, httplib::Response&);
-    void getDryRun(const httplib::Request&, httplib::Response&);
-    void getSnapshot(const httplib::Request&, httplib::Response&);
+    void getMap(const httplib::Request& req, httplib::Response& res);
+    void getState(const httplib::Request& req, httplib::Response& res);
+    void getRide(const httplib::Request& req, httplib::Response& res);
+    void getSearch(const httplib::Request& req, httplib::Response& res);
+    void postRideRequest(const httplib::Request& req, httplib::Response& res);
+    void postRideCancel(const httplib::Request& req, httplib::Response& res);
+    void postRideRate(const httplib::Request& req, httplib::Response& res);
+    void getRiderHistory(const httplib::Request& req, httplib::Response& res);
+    void postRoadTraffic(const httplib::Request& req, httplib::Response& res);
+    void postRoadBlock(const httplib::Request& req, httplib::Response& res);
+    void getLeaderboard(const httplib::Request& req, httplib::Response& res);
+    void getAnalytics(const httplib::Request& req, httplib::Response& res);
+    void postSimControl(const httplib::Request& req, httplib::Response& res);
+    void getRoute(const httplib::Request& req, httplib::Response& res);
+    void getDryRun(const httplib::Request& req, httplib::Response& res);
+    void getSnapshot(const httplib::Request& req, httplib::Response& res);
 };
